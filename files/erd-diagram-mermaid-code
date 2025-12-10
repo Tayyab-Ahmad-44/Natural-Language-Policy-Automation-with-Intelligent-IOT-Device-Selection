@@ -1,0 +1,98 @@
+erDiagram
+	direction TB
+	ORGANIZATION {
+		uuid id PK ""  
+		string name  ""  
+	}
+
+	ENVIRONMENT {
+		uuid id PK ""  
+		uuid org_id FK ""  
+		string name  ""  
+	}
+
+	DEVICE {
+		uuid id PK ""  
+		uuid org_id FK ""  
+		uuid env_id FK ""  
+		string name  ""  
+		string type  ""  
+	}
+
+	TASK {
+		uuid id PK ""  
+		string name  ""  
+		string description  ""  
+		string created_at  ""  
+	}
+
+	POLICY {
+		uuid id PK ""  
+		uuid org_id FK ""  
+		uuid task_id FK ""  
+		string name  ""  
+		uuid owner_id FK ""  
+	}
+
+	CAPABILITY {
+		uuid id PK ""  
+		uuid device_id FK ""  
+		uuid template_id FK ""  
+		string name  ""  
+		string method  ""  
+	}
+
+	POLICY_VERSION {
+		uuid id PK ""  
+		uuid policy_id FK ""  
+		int version  ""  
+	}
+
+	POLICY_ACTION {
+		uuid id PK ""  
+		uuid policy_version_id FK ""  
+		string capability_name  ""  
+		int ordinal  ""  
+	}
+
+	SCHEDULE {
+		uuid id PK ""  
+		uuid policy_id FK ""  
+		uuid policy_version_id FK ""  
+		string cron  ""  
+	}
+
+	EXECUTION_RUN {
+		uuid id PK ""  
+		uuid policy_id FK ""  
+		uuid policy_version_id FK ""  
+		uuid triggered_by_user_id FK ""  
+		string status  ""  
+	}
+
+	EXECUTION_STEP {
+		uuid id PK ""  
+		uuid run_id FK ""  
+		uuid action_id FK ""  
+		uuid device_id FK ""  
+		uuid capability_id FK ""  
+		int ordinal  ""  
+		string status  ""  
+	}
+
+	ORGANIZATION||--o{ENVIRONMENT:"has"
+	ORGANIZATION||--o{DEVICE:"owns"
+	ORGANIZATION||--o{TASK:"owns"
+	ORGANIZATION||--o{POLICY:"owns"
+	TASK||--o{POLICY:"contains"
+	ENVIRONMENT||--o{DEVICE:"contains"
+	DEVICE||--o{CAPABILITY:"provides"
+	POLICY||--o{POLICY_VERSION:"versions"
+	POLICY_VERSION||--o{POLICY_ACTION:"actions"
+	POLICY||--o{SCHEDULE:"scheduled_with"
+	POLICY||--o{EXECUTION_RUN:"executed"
+	POLICY_VERSION||--o{EXECUTION_RUN:"uses_version"
+	EXECUTION_RUN||--o{EXECUTION_STEP:"has_steps"
+	POLICY_ACTION||--o{EXECUTION_STEP:"produces_steps"
+	DEVICE||--o{EXECUTION_STEP:"step_targets_device"
+	CAPABILITY||--o{EXECUTION_STEP:"step_uses_capability"

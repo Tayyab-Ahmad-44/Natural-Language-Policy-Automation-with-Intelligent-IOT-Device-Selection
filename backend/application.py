@@ -178,21 +178,38 @@ def create_task(task: schemas.TaskCreate, db: Session = Depends(get_db)):
         })
         
     policy_rules = llm.break_down_task(task.description, devices_data)
-    
-    # 3. Create Policies for each rule
+
+    # 3. Create Policies for each returned policy/rule
     for rule in policy_rules:
         try:
-            parsed = llm.parse_policy_with_llm(rule, devices_data)
-            
-            db_policy = models.Policy(
-                name=f"{task.name} - Rule", # Or generate a name?
-                original_text=rule,
-                start_time=parsed.time_window['from_time'],
-                end_time=parsed.time_window['to_time'],
-                execution_plan=parsed.execution_plan,
-                task_id=db_task.id
-            )
-            db.add(db_policy)
+            # If LLM returned structured policies (dict with execution_plan), use them directly
+            if isinstance(rule, dict) and rule.get("execution_plan") is not None:
+                original_text = rule.get("original_text") or f"{task.name} - Policy"
+                time_window = rule.get("time_window", {"from_time": "00:00", "to_time": "23:59"})
+                execution_plan = rule.get("execution_plan", [])
+
+                db_policy = models.Policy(
+                    name=f"{task.name} - {original_text}",
+                    original_text=original_text,
+                    start_time=time_window.get("from_time", "00:00"),
+                    end_time=time_window.get("to_time", "23:59"),
+                    execution_plan=execution_plan,
+                    task_id=db_task.id
+                )
+                db.add(db_policy)
+            else:
+                # Fallback: rule is a natural language string -> parse into execution plan
+                parsed = llm.parse_policy_with_llm(rule, devices_data)
+
+                db_policy = models.Policy(
+                    name=f"{task.name} - Rule",
+                    original_text=rule,
+                    start_time=parsed.time_window['from_time'],
+                    end_time=parsed.time_window['to_time'],
+                    execution_plan=parsed.execution_plan,
+                    task_id=db_task.id
+                )
+                db.add(db_policy)
         except Exception as e:
             print(f"Failed to create policy for rule '{rule}': {e}")
             

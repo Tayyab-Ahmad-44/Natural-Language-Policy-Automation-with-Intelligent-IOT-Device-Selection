@@ -80,15 +80,23 @@ def parse_policy_with_llm(policy_text: str, devices_data: list) -> schemas.Polic
             time_window={"from_time": "00:00", "to_time": "23:59"}
         )
 
-def break_down_task(task_description: str, devices_data: list) -> list[str]:
+def break_down_task(task_description: str, devices_data: list) -> list:
     """
-    Uses Groq to break down a high-level task into a list of natural language policy rules.
+    Uses Groq to analyze a high-level task and return a list of structured policies.
+
+    Each returned policy should be a dict with at least:
+      - original_text: the natural-language description for the policy
+      - time_window: {"from_time": "HH:MM", "to_time": "HH:MM"}
+      - execution_plan: [{"device": "Device Name", "capability": "Capability Name", "args": {...}}]
+
+    The LLM should use the available device capabilities when creating the execution plans.
     """
     devices_json = json.dumps(devices_data, indent=2)
-    
+
     prompt = f"""
     You are an intelligent home automation assistant.
-    Your task is to break down a high-level user task into a list of specific, actionable natural language policy rules.
+    Your task is to analyze a high-level user *task* (not already-written policies) and produce a list of concrete, structured policies
+    that, when executed, will achieve the task using the provided devices and their capabilities.
 
     Available Devices and Capabilities:
     {devices_json}
@@ -96,19 +104,27 @@ def break_down_task(task_description: str, devices_data: list) -> list[str]:
     User Task: "{task_description}"
 
     Instructions:
-    1. Analyze the task and determine what specific actions need to be taken.
-    2. Generate a list of natural language policy rules. Each rule should be specific enough to be parsed later into an execution plan (device + capability + args + time).
-    3. If the task implies a schedule (e.g., "at night"), include time constraints in the rules.
-    4. Return a JSON object with a "rules" key containing the list of strings.
-    
-    Example Output:
-    {{
-        "rules": [
-            "Turn on the living room light at 18:00",
-            "Lock the front door at 22:00"
-        ]
-    }}
-    
+    1. Understand the user's intent and determine what concrete actions are required.
+    2. For each required action, create a policy object with these fields:
+       - "original_text": a short natural-language description of the policy
+       - "time_window": {{"from_time": "HH:MM", "to_time": "HH:MM"}} (use full-day 00:00-23:59 if no specific time)
+       - "execution_plan": a list of actions, where each action maps to a device capability and includes any required "args" based on the capability's input_schema
+    3. Use the available devices and their capabilities to populate the execution_plan. If multiple devices can fulfil the same role, choose the most appropriate one.
+    4. Return a JSON object with a single key "policies" whose value is the list of policy objects.
+
+        Example Output:
+        {{
+            "policies": [
+                {{
+                    "original_text": "Turn off living room lights at 20:00",
+                    "time_window": {{"from_time": "20:00", "to_time": "20:00"}},
+                    "execution_plan": [
+                        {{"device": "Living Room Light", "capability": "Turn Off", "args": {{}}}}
+                    ]
+                }}
+            ]
+        }}
+
     ONLY return the JSON string, no markdown formatting.
     """
 
@@ -122,15 +138,16 @@ def break_down_task(task_description: str, devices_data: list) -> list[str]:
             max_tokens=1024
         )
         text = response.choices[0].message.content.strip()
-        
+
         if text.startswith("```json"):
             text = text[7:]
         if text.endswith("```"):
             text = text[:-3]
-            
+
         data = json.loads(text)
-        return data.get("rules", [])
-        
+        # Expecting a dict with key "policies"
+        return data.get("policies", [])
+
     except Exception as e:
         print(f"LLM Task Breakdown Error: {e}")
         return []
