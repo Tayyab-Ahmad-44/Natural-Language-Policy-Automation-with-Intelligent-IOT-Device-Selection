@@ -3,6 +3,29 @@ import { useState, useEffect } from 'react';
 import api, { Policy } from '@/lib/api';
 import { Clock } from 'lucide-react';
 
+function getPolicyDeviceNames(policy: Policy): string[] {
+    const plan = policy.execution_plan;
+    if (!plan) return [];
+
+    // New DAG format
+    if (!Array.isArray(plan) && typeof plan === 'object' && 'nodes' in plan && Array.isArray(plan.nodes)) {
+        const names = plan.nodes
+            .map((node) => node?.device)
+            .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+        return Array.from(new Set(names));
+    }
+
+    // Legacy flat list format
+    if (Array.isArray(plan)) {
+        const names = plan
+            .map((action) => action?.device)
+            .filter((name): name is string => typeof name === 'string' && name.trim().length > 0);
+        return Array.from(new Set(names));
+    }
+
+    return [];
+}
+
 export default function SchedulePage() {
     const [policies, setPolicies] = useState<Policy[]>([]);
 
@@ -48,9 +71,9 @@ export default function SchedulePage() {
                                     <div className="font-bold text-lg">{policy.name}</div>
                                     <div className="text-gray-600 mb-2">{policy.original_text}</div>
                                     <div className="flex flex-wrap gap-2">
-                                        {policy.devices.map(d => (
-                                            <span key={d.id} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
-                                                {d.name}
+                                        {getPolicyDeviceNames(policy).map((deviceName) => (
+                                            <span key={deviceName} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                                                {deviceName}
                                             </span>
                                         ))}
                                     </div>

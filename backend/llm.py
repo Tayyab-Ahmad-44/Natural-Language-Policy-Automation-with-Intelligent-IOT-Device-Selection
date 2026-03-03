@@ -6,146 +6,207 @@ from load_dotenv import load_dotenv
 
 load_dotenv()
 
-# Configure Groq
-# In a real app, use env vars. For this demo, we assume the user has set up their environment.
-# If API key is missing, this will fail.
-
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+# ──────────────────────────────────────────────────────────────────
+# Few-shot examples for DAG generation
+# ──────────────────────────────────────────────────────────────────
+
+DAG_EXAMPLES = """
+EXAMPLE 1 — Pure parallel (all independent actions):
+User Policy: "At 8 PM, set living room lights to purple, play party hits at volume 80, and set thermostat fan to on."
+Output:
+{
+  "time_window": {"from_time": "20:00", "to_time": "20:00"},
+  "execution_dag": {
+    "nodes": [
+      {"id": "step_1", "device": "Living Room Light", "capability": "Set Color", "args": {"hex": "#800080"}, "dependencies": [], "condition": null, "on_failure": "ignore"},
+      {"id": "step_2", "device": "Smart Speaker", "capability": "Play Music", "args": {"playlist": "Party Hits"}, "dependencies": [], "condition": null, "on_failure": "ignore"},
+      {"id": "step_3", "device": "Smart Speaker", "capability": "Set Volume", "args": {"level": 80}, "dependencies": ["step_2"], "condition": {"type": "on_success"}, "on_failure": "ignore"},
+      {"id": "step_4", "device": "Thermostat", "capability": "Fan Control", "args": {"state": "on"}, "dependencies": [], "condition": null, "on_failure": "ignore"}
+    ]
+  }
+}
+
+EXAMPLE 2 — Sequential with value-based condition:
+User Policy: "Read the temperature sensor, if it exceeds 30 degrees then activate the cooling fan at 2000 RPM and flash the warning light yellow for 30 seconds."
+Output:
+{
+  "time_window": {"from_time": "00:00", "to_time": "23:59"},
+  "execution_dag": {
+    "nodes": [
+      {"id": "step_1", "device": "Temp Sensor", "capability": "Read", "args": {}, "dependencies": [], "condition": null, "on_failure": "halt_branch"},
+      {"id": "step_2", "device": "Cooling Fan", "capability": "Set Speed", "args": {"rpm": 2000}, "dependencies": ["step_1"], "condition": {"type": "on_value", "source_node_id": "step_1", "field": "temp", "operator": ">", "value": 30}, "on_failure": "ignore"},
+      {"id": "step_3", "device": "Warning Light", "capability": "Flash", "args": {"color": "yellow", "duration": 30}, "dependencies": ["step_1"], "condition": {"type": "on_value", "source_node_id": "step_1", "field": "temp", "operator": ">", "value": 30}, "on_failure": "ignore"}
+    ]
+  }
+}
+
+EXAMPLE 3 — Mixed DAG (sequential + parallel + conditional):
+User Policy: "At 11 PM, lock the front door and close the garage door. Once the front door is locked, arm the security camera to record for 60 seconds. Also turn off all lights."
+Output:
+{
+  "time_window": {"from_time": "23:00", "to_time": "23:00"},
+  "execution_dag": {
+    "nodes": [
+      {"id": "step_1", "device": "Front Door Lock", "capability": "Lock", "args": {}, "dependencies": [], "condition": null, "on_failure": "halt_branch"},
+      {"id": "step_2", "device": "Garage Door", "capability": "Close", "args": {}, "dependencies": [], "condition": null, "on_failure": "skip_dependents"},
+      {"id": "step_3", "device": "Security Camera", "capability": "Record", "args": {"duration": 60}, "dependencies": ["step_1"], "condition": {"type": "on_success"}, "on_failure": "ignore"},
+      {"id": "step_4", "device": "Living Room Light", "capability": "Turn Off", "args": {}, "dependencies": [], "condition": null, "on_failure": "ignore"}
+    ]
+  }
+}
+"""
+
+DAG_SCHEMA_INSTRUCTIONS = """
+EXECUTION DAG STRUCTURE:
+The execution_dag contains "nodes" — each node is a device action. Nodes can depend on other nodes forming a Directed Acyclic Graph (DAG).
+
+Each node has:
+- "id": unique string identifier (e.g. "step_1", "step_2")
+- "device": the device name (must match an available device exactly)
+- "capability": the capability name (must match exactly)
+- "args": arguments dict matching the capability's input_schema
+- "dependencies": list of node IDs that must complete before this node executes. Empty list = root node (executes immediately in parallel with other root nodes)
+- "condition": when this node should execute relative to its dependencies:
+    - null or omitted: execute when ALL dependencies succeed (default behavior)
+    - {"type": "on_success"}: same as null — execute when all deps succeed
+    - {"type": "on_failure"}: execute only if a dependency FAILED
+    - {"type": "on_value", "source_node_id": "step_X", "field": "fieldname", "operator": ">", "value": 30}: execute only if a specific field in a dependency's response meets the condition. Operators: ">", "<", "==", "!=", ">=", "<=", "contains"
+- "on_failure": what happens if THIS node fails:
+    - "halt_branch": all nodes that depend on this one (and their dependents) are skipped. Use for CRITICAL actions (emergency stops, locks, sensors providing data for decisions)
+    - "skip_dependents": only direct dependents are skipped, not transitive ones
+    - "ignore": treat failure as success — dependents still execute. Use for non-critical/ambient actions (music, lights in non-emergency contexts)
+
+RULES FOR BUILDING THE DAG:
+1. Actions that are INDEPENDENT should have no dependencies (empty list) — they run in parallel
+2. Action B depends on Action A if: B needs A's result (sensor reading), B should happen AFTER A (lock door THEN arm camera), or B only makes sense if A succeeds
+3. Multiple nodes can depend on the same parent — they fan out in parallel after the parent completes
+4. Multiple nodes can be listed as dependencies of one node — it waits for ALL of them (fan-in)
+5. NEVER create cycles (A depends on B, B depends on A)
+6. Choose on_failure based on context: emergency/safety policies → "halt_branch", ambient/comfort → "ignore", general → "skip_dependents"
+"""
+
 
 def parse_policy_with_llm(policy_text: str, devices_data: list) -> schemas.PolicyResponseLLM:
     """
-    Uses Gemini to parse natural language policy into structured data.
+    Uses Groq LLM to parse natural language policy into a structured DAG execution plan.
     """
-    
-    # Construct prompt
     devices_json = json.dumps(devices_data, indent=2)
-    
-    prompt = f"""
-    You are an intelligent home automation assistant.
-    Your task is to parse a natural language policy and convert it into a structured execution plan.
 
-    Available Devices and Capabilities:
-    {devices_json}
+    prompt = f"""You are an intelligent IoT automation assistant.
+Your task is to parse a natural language policy and convert it into a structured execution DAG (Directed Acyclic Graph).
 
-    User Policy: "{policy_text}"
+Available Devices and Capabilities:
+{devices_json}
 
-    Instructions:
-    1. Identify the time window (start_time and end_time) in HH:MM 24-hour format. If not specified, assume 00:00 to 23:59.
-    2. Identify which devices and capabilities are relevant to the policy.
-    3. For each relevant capability, generate the necessary arguments (args) based on the input_schema.
-    4. Return a JSON object with the following structure:
-    {{
-        "time_window": {{
-            "from_time": "HH:MM",
-            "to_time": "HH:MM"
-        }},
-        "execution_plan": [
-            {{
-                "device": "Device Name",
-                "capability": "Capability Name",
-                "args": {{ ... }}
-            }}
-        ]
-    }}
-    
-    If the policy is ambiguous or no device matches, do your best to infer or return an empty plan.
-    ONLY return the JSON string, no markdown formatting.
-    """
-    
+{DAG_SCHEMA_INSTRUCTIONS}
+
+{DAG_EXAMPLES}
+
+User Policy: "{policy_text}"
+
+Instructions:
+1. Identify the time window (from_time and to_time) in HH:MM 24-hour format. If not specified, use 00:00 to 23:59.
+2. Analyze the policy to determine which devices/capabilities are needed and how they relate to each other.
+3. Build an execution DAG: identify which actions are independent (parallel), which depend on others (sequential), and which have conditions.
+4. Return a JSON object with "time_window" and "execution_dag" keys.
+
+If the policy is ambiguous or no device matches, do your best to infer or return an empty DAG.
+ONLY return the JSON string, no markdown formatting, no explanation.
+"""
+
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
-            max_tokens=1024
+            max_tokens=2048,
         )
         text = response.choices[0].message.content.strip()
-        
+
         # Clean up potential markdown code blocks
         if text.startswith("```json"):
             text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
         if text.endswith("```"):
             text = text[:-3]
-            
-        data = json.loads(text)
+
+        data = json.loads(text.strip())
         return schemas.PolicyResponseLLM(**data)
-        
+
     except Exception as e:
         print(f"LLM Error: {e}")
-        # Fallback or re-raise
         return schemas.PolicyResponseLLM(
-            execution_plan=[],
-            time_window={"from_time": "00:00", "to_time": "23:59"}
+            execution_dag=schemas.ExecutionDAG(nodes=[]),
+            time_window={"from_time": "00:00", "to_time": "23:59"},
         )
+
 
 def break_down_task(task_description: str, devices_data: list) -> list:
     """
-    Uses Groq to analyze a high-level task and return a list of structured policies.
-
-    Each returned policy should be a dict with at least:
-      - original_text: the natural-language description for the policy
-      - time_window: {"from_time": "HH:MM", "to_time": "HH:MM"}
-      - execution_plan: [{"device": "Device Name", "capability": "Capability Name", "args": {...}}]
-
-    The LLM should use the available device capabilities when creating the execution plans.
+    Uses Groq LLM to break down a high-level task into multiple structured policies,
+    each with its own execution DAG.
     """
     devices_json = json.dumps(devices_data, indent=2)
 
-    prompt = f"""
-    You are an intelligent home automation assistant.
-    Your task is to analyze a high-level user *task* (not already-written policies) and produce a list of concrete, structured policies
-    that, when executed, will achieve the task using the provided devices and their capabilities.
+    prompt = f"""You are an intelligent IoT automation assistant.
+Your task is to analyze a high-level user task and produce a list of concrete, structured policies.
+Each policy should have its own execution DAG (Directed Acyclic Graph).
 
-    Available Devices and Capabilities:
-    {devices_json}
+Available Devices and Capabilities:
+{devices_json}
 
-    User Task: "{task_description}"
+{DAG_SCHEMA_INSTRUCTIONS}
 
-    Instructions:
-    1. Understand the user's intent and determine what concrete actions are required.
-    2. For each required action, create a policy object with these fields:
-       - "original_text": a short natural-language description of the policy
-       - "time_window": {{"from_time": "HH:MM", "to_time": "HH:MM"}} (use full-day 00:00-23:59 if no specific time)
-       - "execution_plan": a list of actions, where each action maps to a device capability and includes any required "args" based on the capability's input_schema
-    3. Use the available devices and their capabilities to populate the execution_plan. If multiple devices can fulfil the same role, choose the most appropriate one.
-    4. Return a JSON object with a single key "policies" whose value is the list of policy objects.
+{DAG_EXAMPLES}
 
-        Example Output:
+User Task: "{task_description}"
+
+Instructions:
+1. Break the task into logical, separate policies (each one can be scheduled independently).
+2. For each policy, create:
+   - "original_text": a short natural-language description
+   - "time_window": {{"from_time": "HH:MM", "to_time": "HH:MM"}} (use 00:00-23:59 if no specific time)
+   - "execution_dag": a DAG structure with nodes, dependencies, conditions, and failure strategies
+3. Return a JSON object with a single key "policies" whose value is the list of policy objects.
+
+Example Output:
+{{
+    "policies": [
         {{
-            "policies": [
-                {{
-                    "original_text": "Turn off living room lights at 20:00",
-                    "time_window": {{"from_time": "20:00", "to_time": "20:00"}},
-                    "execution_plan": [
-                        {{"device": "Living Room Light", "capability": "Turn Off", "args": {{}}}}
-                    ]
-                }}
-            ]
+            "original_text": "Turn off living room lights at 20:00",
+            "time_window": {{"from_time": "20:00", "to_time": "20:00"}},
+            "execution_dag": {{
+                "nodes": [
+                    {{"id": "step_1", "device": "Living Room Light", "capability": "Turn Off", "args": {{}}, "dependencies": [], "condition": null, "on_failure": "ignore"}}
+                ]
+            }}
         }}
+    ]
+}}
 
-    ONLY return the JSON string, no markdown formatting.
-    """
+ONLY return the JSON string, no markdown formatting, no explanation.
+"""
 
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
+            messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
-            max_tokens=1024
+            max_tokens=2048,
         )
         text = response.choices[0].message.content.strip()
 
         if text.startswith("```json"):
             text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
         if text.endswith("```"):
             text = text[:-3]
 
-        data = json.loads(text)
-        # Expecting a dict with key "policies"
+        data = json.loads(text.strip())
         return data.get("policies", [])
 
     except Exception as e:

@@ -3,6 +3,37 @@ import { useState, useEffect } from 'react';
 import api, { Task, Policy } from '@/lib/api';
 import { Plus, ChevronDown, ChevronRight, Trash2, Loader2 } from 'lucide-react';
 
+function getPolicyActions(policy: Policy): Array<{ id: string; device: string; capability: string; args: Record<string, any> }> {
+    const plan = policy.execution_plan;
+    if (!plan) return [];
+
+    // New DAG format
+    if (!Array.isArray(plan) && typeof plan === 'object' && 'nodes' in plan && Array.isArray(plan.nodes)) {
+        return plan.nodes
+            .filter((node) => node && typeof node === 'object')
+            .map((node) => ({
+                id: String(node.id ?? `${node.device}-${node.capability}`),
+                device: String(node.device ?? 'unknown-device'),
+                capability: String(node.capability ?? 'unknown-capability'),
+                args: node.args ?? {},
+            }));
+    }
+
+    // Legacy flat action list
+    if (Array.isArray(plan)) {
+        return plan
+            .filter((action) => action && typeof action === 'object')
+            .map((action, idx) => ({
+                id: String(action.id ?? `${action.device}-${action.capability}-${idx}`),
+                device: String(action.device ?? 'unknown-device'),
+                capability: String(action.capability ?? 'unknown-capability'),
+                args: action.args ?? {},
+            }));
+    }
+
+    return [];
+}
+
 export default function TasksPage() {
     const [tasks, setTasks] = useState<Task[]>([]);
     const [newTaskName, setNewTaskName] = useState('');
@@ -146,8 +177,8 @@ export default function TasksPage() {
                                                     </div>
                                                 </div>
                                                 <div className="mt-2 space-y-1">
-                                                    {policy.execution_plan?.map((action: any, idx: number) => (
-                                                        <div key={idx} className="text-xs text-gray-600 flex gap-2">
+                                                    {getPolicyActions(policy).map((action) => (
+                                                        <div key={action.id} className="text-xs text-gray-600 flex gap-2">
                                                             <span className="font-semibold">{action.device}</span>
                                                             <span>&rarr;</span>
                                                             <span>{action.capability}</span>

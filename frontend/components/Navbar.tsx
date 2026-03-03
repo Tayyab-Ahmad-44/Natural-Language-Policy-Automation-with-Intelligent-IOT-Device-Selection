@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Shield, Settings, Calendar } from "lucide-react";
+import { Shield, Settings, Calendar, Activity } from "lucide-react";
 
 export default function Navbar() {
     const pathname = usePathname();
@@ -35,6 +35,10 @@ export default function Navbar() {
                             <Link href="/schedule" className={`${isActive("/schedule")} inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}>
                                 <Calendar className="w-4 h-4 mr-2" />
                                 Schedule
+                            </Link>
+                            <Link href="/executions" className={`${isActive("/executions")} inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}>
+                                <Activity className="w-4 h-4 mr-2" />
+                                Executions
                             </Link>
                             <Link href="/tasks" className={`${isActive("/tasks")} inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium`}>
                                 <Shield className="w-4 h-4 mr-2" />
