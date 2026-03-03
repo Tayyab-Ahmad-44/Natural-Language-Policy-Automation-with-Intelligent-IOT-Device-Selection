@@ -87,6 +87,32 @@ def read_devices(skip: int = 0, limit: int = 100, db: Session = Depends(get_db))
     devices = db.query(models.Device).offset(skip).limit(limit).all()
     return devices
 
+@application.put("/api/devices/{device_id}", response_model=schemas.Device)
+def update_device(device_id: int, device: schemas.DeviceCreate, db: Session = Depends(get_db)):
+    db_device = db.query(models.Device).filter(models.Device.id == device_id).first()
+    if not db_device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    
+    db_device.name = device.name
+    db_device.type = device.type
+    
+    # Clear existing capabilities and add the updated ones
+    db.query(models.Capability).filter(models.Capability.device_id == device_id).delete()
+    
+    for cap in device.capabilities:
+        db_cap = models.Capability(
+            name=cap.name,
+            url=cap.url,
+            method=cap.method,
+            input_schema=cap.input_schema,
+            device_id=db_device.id,
+        )
+        db.add(db_cap)
+
+    db.commit()
+    db.refresh(db_device)
+    return db_device
+
 @application.delete("/api/devices/{device_id}")
 def delete_device(device_id: int, db: Session = Depends(get_db)):
     device = db.query(models.Device).filter(models.Device.id == device_id).first()

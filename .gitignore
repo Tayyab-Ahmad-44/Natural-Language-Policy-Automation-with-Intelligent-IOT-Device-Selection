@@ -2,3 +2,5 @@ env/
 .env
 sql_app.db
 node_modules/
+venv/
+__pycache__/

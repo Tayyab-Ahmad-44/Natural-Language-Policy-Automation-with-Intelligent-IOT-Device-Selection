@@ -16,6 +16,16 @@ export default function DevicesPage() {
     const [newCapMethod, setNewCapMethod] = useState('GET');
     const [newCapSchema, setNewCapSchema] = useState('{}');
 
+    // Edit state
+    const [editingDevice, setEditingDevice] = useState<Device | null>(null);
+    const [editDeviceName, setEditDeviceName] = useState('');
+    const [editDeviceType, setEditDeviceType] = useState('camera');
+    const [editCapabilities, setEditCapabilities] = useState<Capability[]>([]);
+    const [editNewCapName, setEditNewCapName] = useState('');
+    const [editNewCapUrl, setEditNewCapUrl] = useState('');
+    const [editNewCapMethod, setEditNewCapMethod] = useState('GET');
+    const [editNewCapSchema, setEditNewCapSchema] = useState('{}');
+
     useEffect(() => {
         fetchDevices();
     }, []);
@@ -69,6 +79,95 @@ export default function DevicesPage() {
             console.error("Failed to add device", error);
             alert("Failed to add device. Name might be duplicate.");
         }
+    };
+
+    const handleEditClick = (device: Device) => {
+        setEditingDevice(device);
+        setEditDeviceName(device.name);
+        setEditDeviceType(device.type);
+        setEditCapabilities([...(device.capabilities || [])]);
+    };
+
+    const handleUpdateDevice = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingDevice) return;
+        
+        // Parse any stringified schemas back into JSON objects before sending to API
+        const parsedCapabilities = editCapabilities.map(cap => {
+            let schema = cap.input_schema;
+            if (typeof schema === 'string') {
+                try {
+                    schema = JSON.parse(schema);
+                } catch (err) {
+                    console.warn(`Could not parse JSON schema for capability ${cap.name}:`, err);
+                }
+            }
+            return { ...cap, input_schema: schema };
+        });
+
+        try {
+            await api.put(`/devices/${editingDevice.id}`, {
+                name: editDeviceName,
+                type: editDeviceType,
+                capabilities: parsedCapabilities
+            });
+            setEditingDevice(null);
+            fetchDevices();
+        } catch (error) {
+            console.error("Failed to update device", error);
+            alert("Failed to update device.");
+        }
+    };
+
+    const addEditCapability = () => {
+        try {
+            const schema = JSON.parse(editNewCapSchema);
+            setEditCapabilities([...editCapabilities, {
+                name: editNewCapName,
+                url: editNewCapUrl,
+                method: editNewCapMethod,
+                input_schema: schema
+            }]);
+            setEditNewCapName('');
+            setEditNewCapUrl('');
+            setEditNewCapSchema('{}');
+        } catch (e) {
+            alert("Invalid JSON schema");
+        }
+    };
+
+    const removeEditCapability = (index: number) => {
+        const newCaps = [...editCapabilities];
+        newCaps.splice(index, 1);
+        setEditCapabilities(newCaps);
+    };
+
+    const handleEditCapabilityChange = (index: number, field: keyof Capability, value: string) => {
+        const newCaps = [...editCapabilities];
+        if (field === 'input_schema') {
+            try {
+                // If it's valid JSON, update it. If not, we still update the string for typing, 
+                // but we need to represent the schema as string in state if we want to allow 
+                // temporary invalid typing. Given the API expects an object, we will parse it.
+                // For a robust implementation, we should probably keep raw strings in state
+                // and parse on save, but for simplicity here we try to parse it.
+                const schema = JSON.parse(value);
+                newCaps[index] = { ...newCaps[index], [field]: schema };
+            } catch (error) {
+                // To allow user to type and have intermediate invalid JSON, we really should 
+                // not throw an alert on every keystroke. 
+                // Best to ignore and only validate on Add/Save, but to keep capability.input_schema
+                // generic, we simply won't update state if it's invalid during edit.
+                // Alternative: just store it as string and we parse it during PUT. 
+                // But the backend expects 'any' object.
+                console.warn("Invalid JSON during edit");
+                // For seamless editing, we need a separate state, but we will assume user
+                // will paste correct JSON.
+            }
+        } else {
+            newCaps[index] = { ...newCaps[index], [field]: value };
+        }
+        setEditCapabilities(newCaps);
     };
 
     return (
@@ -232,6 +331,12 @@ export default function DevicesPage() {
                                         Active
                                     </span>
                                     <button
+                                        onClick={() => handleEditClick(device)}
+                                        className="text-indigo-600 hover:text-indigo-900 text-sm font-medium cursor-pointer"
+                                    >
+                                        Edit
+                                    </button>
+                                    <button
                                         onClick={async () => {
                                             if (confirm('Are you sure you want to delete this device?')) {
                                                 try {
@@ -255,6 +360,193 @@ export default function DevicesPage() {
                     )}
                 </ul>
             </div>
+
+            {/* Edit Device Modal */}
+            {editingDevice && (
+                <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center z-50">
+                    <div className="relative bg-white p-6 rounded-md shadow-xl max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-medium text-gray-900">Edit Device: {editingDevice.name}</h3>
+                            <button onClick={() => setEditingDevice(null)} className="text-gray-400 hover:text-gray-500">
+                                <span className="sr-only">Close</span>
+                                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
+                        <form onSubmit={handleUpdateDevice} className="space-y-4">
+                            <div className="flex gap-4">
+                                <div className="flex-1">
+                                    <label htmlFor="edit-name" className="block text-sm font-medium text-gray-700">Device Name</label>
+                                    <input
+                                        type="text"
+                                        id="edit-name"
+                                        required
+                                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-black"
+                                        value={editDeviceName}
+                                        onChange={(e) => setEditDeviceName(e.target.value)}
+                                    />
+                                </div>
+                                <div className="w-48">
+                                    <label htmlFor="edit-type" className="block text-sm font-medium text-gray-700">Type</label>
+                                    <input
+                                        list="edit-device-types"
+                                        id="edit-type"
+                                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-black"
+                                        value={editDeviceType}
+                                        onChange={(e) => setEditDeviceType(e.target.value)}
+                                    />
+                                    <datalist id="edit-device-types">
+                                        <option value="Camera" />
+                                        <option value="Alarm" />
+                                        <option value="Lock" />
+                                        <option value="Light" />
+                                        <option value="Sensor" />
+                                        <option value="Thermostat" />
+                                        <option value="Speaker" />
+                                        <option value="Appliance" />
+                                    </datalist>
+                                </div>
+                            </div>
+
+                            <div className="border-t pt-4">
+                                <h4 className="text-md font-medium text-gray-900 mb-2">Capabilities</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end bg-gray-50 p-4 rounded-md">
+                                    <div className="md:col-span-1">
+                                        <label className="block text-xs font-medium text-gray-500">Name</label>
+                                        <input
+                                            type="text"
+                                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1 px-2 text-sm text-black"
+                                            value={editNewCapName}
+                                            onChange={(e) => setEditNewCapName(e.target.value)}
+                                            placeholder="Rotate"
+                                        />
+                                    </div>
+                                    <div className="md:col-span-1">
+                                        <label className="block text-xs font-medium text-gray-500">URL</label>
+                                        <input
+                                            type="text"
+                                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1 px-2 text-sm text-black"
+                                            value={editNewCapUrl}
+                                            onChange={(e) => setEditNewCapUrl(e.target.value)}
+                                            placeholder="http://..."
+                                        />
+                                    </div>
+                                    <div className="md:col-span-1">
+                                        <label className="block text-xs font-medium text-gray-500">Method</label>
+                                        <select
+                                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1 px-2 text-sm text-black"
+                                            value={editNewCapMethod}
+                                            onChange={(e) => setEditNewCapMethod(e.target.value)}
+                                        >
+                                            <option>GET</option>
+                                            <option>POST</option>
+                                            <option>PUT</option>
+                                        </select>
+                                    </div>
+                                    <div className="md:col-span-1">
+                                        <label className="block text-xs font-medium text-gray-500">Input Schema (JSON)</label>
+                                        <input
+                                            type="text"
+                                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-1 px-2 text-sm text-black"
+                                            value={editNewCapSchema}
+                                            onChange={(e) => setEditNewCapSchema(e.target.value)}
+                                            placeholder="{}"
+                                        />
+                                    </div>
+                                    <div className="md:col-span-1">
+                                        <button
+                                            type="button"
+                                            onClick={addEditCapability}
+                                            className="w-full inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-indigo-700 bg-indigo-100 hover:bg-indigo-200"
+                                        >
+                                            Add Cap
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="mt-4 space-y-2 max-h-60 overflow-y-auto">
+                                    <h4 className="text-sm font-medium text-gray-700">Existing Capabilities</h4>
+                                    {editCapabilities.map((cap, idx) => (
+                                        <div key={idx} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-center bg-white border border-gray-200 p-2 rounded-md shadow-sm">
+                                            <div className="md:col-span-1">
+                                                <input
+                                                    type="text"
+                                                    className="block w-full border border-gray-300 rounded-md shadow-sm py-1 px-2 text-sm text-black"
+                                                    value={cap.name}
+                                                    onChange={(e) => handleEditCapabilityChange(idx, 'name', e.target.value)}
+                                                    placeholder="Name"
+                                                />
+                                            </div>
+                                            <div className="md:col-span-1">
+                                                <input
+                                                    type="text"
+                                                    className="block w-full border border-gray-300 rounded-md shadow-sm py-1 px-2 text-sm text-black"
+                                                    value={cap.url}
+                                                    onChange={(e) => handleEditCapabilityChange(idx, 'url', e.target.value)}
+                                                    placeholder="URL"
+                                                />
+                                            </div>
+                                            <div className="md:col-span-1">
+                                                <select
+                                                    className="block w-full border border-gray-300 rounded-md shadow-sm py-1 px-2 text-sm text-black"
+                                                    value={cap.method}
+                                                    onChange={(e) => handleEditCapabilityChange(idx, 'method', e.target.value)}
+                                                >
+                                                    <option>GET</option>
+                                                    <option>POST</option>
+                                                    <option>PUT</option>
+                                                </select>
+                                            </div>
+                                            <div className="md:col-span-1">
+                                                <input
+                                                    type="text"
+                                                    className="block w-full border border-gray-300 rounded-md shadow-sm py-1 px-2 text-sm text-black"
+                                                    value={typeof cap.input_schema === 'string' ? cap.input_schema : JSON.stringify(cap.input_schema)}
+                                                    onChange={(e) => {
+                                                        const newCaps = [...editCapabilities];
+                                                        // We temporarily store the string to allow smooth typing.
+                                                        // The backend might complain if we send a string when it expects an object,
+                                                        // but since input_schema is defined as `any`, string is technically valid.
+                                                        // We will attempt to parse it before submitting in handleUpdateDevice.
+                                                        newCaps[idx] = { ...newCaps[idx], input_schema: e.target.value };
+                                                        setEditCapabilities(newCaps);
+                                                    }}
+                                                    placeholder="Schema {}"
+                                                />
+                                            </div>
+                                            <div className="md:col-span-1 flex justify-end">
+                                                <button type="button" onClick={() => removeEditCapability(idx)} className="text-red-500 hover:text-red-700 p-1 flex items-center justify-center bg-red-50 rounded-md w-full h-full py-1">
+                                                    <Trash2 className="w-4 h-4 mr-1" /> Remove
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {editCapabilities.length === 0 && (
+                                        <div className="text-sm text-gray-500 text-center py-2">No capabilities added.</div>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="pt-4 flex justify-end gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setEditingDevice(null)}
+                                    className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                >
+                                    Save Changes
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
