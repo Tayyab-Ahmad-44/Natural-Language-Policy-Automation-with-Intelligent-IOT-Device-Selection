@@ -253,6 +253,7 @@ export default function DevicesPage() {
                                     <option>GET</option>
                                     <option>POST</option>
                                     <option>PUT</option>
+                                    <option>SSE</option>
                                 </select>
                             </div>
                             <div className="md:col-span-1">
@@ -442,6 +443,7 @@ export default function DevicesPage() {
                                             <option>GET</option>
                                             <option>POST</option>
                                             <option>PUT</option>
+                                            <option>SSE</option>
                                         </select>
                                     </div>
                                     <div className="md:col-span-1">
@@ -496,6 +498,7 @@ export default function DevicesPage() {
                                                     <option>GET</option>
                                                     <option>POST</option>
                                                     <option>PUT</option>
+                                                    <option>SSE</option>
                                                 </select>
                                             </div>
                                             <div className="md:col-span-1">

@@ -1,9 +1,12 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from sqlalchemy import text, func
+from contextlib import asynccontextmanager
+from typing import List, Optional, Dict
 import json
 import asyncio
+import httpx
 import models, schemas, database, llm, dag_utils, executor
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
@@ -15,7 +18,314 @@ load_dotenv()
 models.Base.metadata.create_all(bind=database.engine)
 
 
-application = FastAPI()
+def _migrate_db():
+    """Add new columns to existing tables without dropping them."""
+    with database.engine.connect() as conn:
+        conn.execute(text("""
+            ALTER TABLE policies
+                ADD COLUMN IF NOT EXISTS repeat_interval_seconds INTEGER,
+                ADD COLUMN IF NOT EXISTS last_executed_at VARCHAR
+        """))
+        conn.commit()
+
+_migrate_db()
+
+
+def _policy_has_sse_nodes(policy: models.Policy, db: Session) -> bool:
+    """Returns True if any node in the policy's DAG maps to an SSE-method capability."""
+    plan = policy.execution_plan
+    if not plan or not isinstance(plan, dict):
+        return False
+    nodes = plan.get("nodes", [])
+    if not nodes:
+        return False
+
+    # Build a (device_name, cap_name) → method lookup from the DB
+    cap_method: dict = {}
+    for device in db.query(models.Device).all():
+        for cap in device.capabilities:
+            cap_method[(device.name.lower(), cap.name.lower())] = cap.method.upper()
+
+    return any(
+        cap_method.get((n.get("device", "").lower(), n.get("capability", "").lower())) == "SSE"
+        for n in nodes
+    )
+
+
+async def _run_scheduler_tick(db: Session) -> tuple:
+    """
+    Core scheduler logic. For each active policy whose time window is current:
+    - If repeat_interval_seconds is set: re-run every N seconds.
+    - If the policy has only SSE nodes (no explicit interval): skip — driven by sensor events.
+    - Otherwise: run once per window entry (resets each day at start_time).
+    Skips policies that already have a run in 'running' state.
+    """
+    now = datetime.now()
+    current_time_str = now.strftime("%H:%M")
+    triggered = []
+
+    active_policies = db.query(models.Policy).filter(models.Policy.is_active == True).all()
+
+    for policy in active_policies:
+        if not (policy.start_time <= current_time_str <= policy.end_time):
+            continue
+
+        # Skip if an execution is already in progress
+        running = db.query(models.ExecutionRun).filter(
+            models.ExecutionRun.policy_id == policy.id,
+            models.ExecutionRun.status == "running",
+        ).first()
+        if running:
+            continue
+
+        # SSE-driven policies without an explicit repeat interval are triggered by sensor
+        # events via _trigger_sse_policies, not by the scheduler.
+        if policy.repeat_interval_seconds is None and _policy_has_sse_nodes(policy, db):
+            continue
+
+        if not _should_execute(policy, now):
+            continue
+
+        try:
+            run = await executor.execute_policy(policy.id, db, triggered_by="scheduler")
+            db.query(models.Policy).filter(models.Policy.id == policy.id).update(
+                {"last_executed_at": now.isoformat()}
+            )
+            db.commit()
+            triggered.append({
+                "policy_name": policy.name,
+                "run_id": run.id,
+                "status": run.status,
+                "summary": run.summary,
+            })
+        except Exception as e:
+            db.rollback()
+            triggered.append({"policy_name": policy.name, "error": str(e)})
+
+    return triggered, current_time_str
+
+
+def _should_execute(policy: models.Policy, now: datetime) -> bool:
+    if policy.last_executed_at is None:
+        return True
+
+    last_run = datetime.fromisoformat(policy.last_executed_at)
+
+    if policy.repeat_interval_seconds is None:
+        # Once per window entry — gate resets each day at start_time
+        today_window_start = datetime.strptime(
+            now.strftime("%Y-%m-%d") + " " + policy.start_time, "%Y-%m-%d %H:%M"
+        )
+        return last_run < today_window_start
+
+    return (now - last_run).total_seconds() >= policy.repeat_interval_seconds
+
+
+async def _scheduler_loop():
+    """Background loop: ticks the scheduler every 15 seconds."""
+    while True:
+        db = database.SessionLocal()
+        try:
+            await _run_scheduler_tick(db)
+        except Exception as e:
+            print(f"[scheduler] tick error: {e}")
+        finally:
+            db.close()
+        await asyncio.sleep(15)
+
+
+# ─── SSE Sensor Subscriber ────────────────────────────────────────
+
+_sse_tasks: Dict[int, asyncio.Task] = {}
+
+
+async def _trigger_sse_policies(cap_id: int, db: Session):
+    """
+    Called on every SSE event. Finds active policies that reference this capability
+    and whose time window is currently active, then executes them immediately.
+    """
+    cap = db.query(models.Capability).filter(models.Capability.id == cap_id).first()
+    if not cap:
+        return
+    device = db.query(models.Device).filter(models.Device.id == cap.device_id).first()
+    if not device:
+        return
+
+    device_name = device.name.lower()
+    cap_name = cap.name.lower()
+
+    now = datetime.now()
+    current_time_str = now.strftime("%H:%M")
+
+    active_policies = db.query(models.Policy).filter(models.Policy.is_active == True).all()
+
+    for policy in active_policies:
+        if not (policy.start_time <= current_time_str <= policy.end_time):
+            continue
+
+        plan = policy.execution_plan
+        if not plan or not isinstance(plan, dict):
+            continue
+        nodes = plan.get("nodes", [])
+        if not any(
+            n.get("device", "").lower() == device_name and n.get("capability", "").lower() == cap_name
+            for n in nodes
+        ):
+            continue
+
+        # Skip if already running
+        running = db.query(models.ExecutionRun).filter(
+            models.ExecutionRun.policy_id == policy.id,
+            models.ExecutionRun.status == "running",
+        ).first()
+        if running:
+            continue
+
+        try:
+            run = await executor.execute_policy(policy.id, db, triggered_by="sse_event")
+            db.query(models.Policy).filter(models.Policy.id == policy.id).update(
+                {"last_executed_at": now.isoformat()}
+            )
+            db.commit()
+            print(f"[SSE trigger] policy '{policy.name}' run #{run.id} → {run.status}")
+        except Exception as e:
+            db.rollback()
+            print(f"[SSE trigger] policy '{policy.name}' error: {e}")
+
+
+async def _subscribe_to_sse(cap_id: int, url: str):
+    """Long-running task: subscribes to one SSE endpoint, stores each event, and triggers policies."""
+    while True:
+        try:
+            timeout = httpx.Timeout(connect=10.0, read=None, write=None, pool=None)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("GET", url) as response:
+                    async for raw_line in response.aiter_lines():
+                        line = raw_line.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        payload = line[5:].strip()
+                        if not payload:
+                            continue
+                        try:
+                            data = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        # Store the reading
+                        db = database.SessionLocal()
+                        try:
+                            cap = db.query(models.Capability).filter(
+                                models.Capability.id == cap_id
+                            ).first()
+                            if cap:
+                                reading = models.SensorReading(
+                                    device_id=cap.device_id,
+                                    capability_name=cap.name,
+                                    data=data,
+                                    received_at=datetime.now().isoformat(),
+                                )
+                                db.add(reading)
+                                db.commit()
+                        finally:
+                            db.close()
+                        # Trigger any policies waiting on this sensor
+                        trigger_db = database.SessionLocal()
+                        try:
+                            await _trigger_sse_policies(cap_id, trigger_db)
+                        finally:
+                            trigger_db.close()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[SSE:{cap_id}] {e} — reconnecting in 5s")
+            await asyncio.sleep(5)
+
+
+def _sse_cap_ids_needed(db: Session) -> set:
+    """
+    Returns the set of Capability IDs (method=SSE) that are actually
+    referenced in at least one active policy's execution plan.
+    Only these should have live SSE connections open.
+    """
+    active_policies = db.query(models.Policy).filter(models.Policy.is_active == True).all()
+
+    # Collect (device_name, cap_name) pairs used across all active policy DAGs
+    needed_pairs: set = set()
+    for policy in active_policies:
+        plan = policy.execution_plan
+        if not plan or not isinstance(plan, dict):
+            continue
+        for node in plan.get("nodes", []):
+            device = node.get("device", "").lower()
+            cap = node.get("capability", "").lower()
+            if device and cap:
+                needed_pairs.add((device, cap))
+
+    if not needed_pairs:
+        return set()
+
+    # Resolve those pairs to Capability IDs that have method=SSE
+    sse_caps = db.query(models.Capability).filter(models.Capability.method == "SSE").all()
+    needed_ids = set()
+    for cap in sse_caps:
+        device_row = db.query(models.Device).filter(models.Device.id == cap.device_id).first()
+        if device_row:
+            key = (device_row.name.lower(), cap.name.lower())
+            if key in needed_pairs:
+                needed_ids.add(cap.id)
+
+    return needed_ids
+
+
+async def _sse_manager_loop():
+    """
+    Syncs SSE subscriptions every 30s.
+    Only connects to SSE capabilities that are referenced in active policies —
+    never auto-connects just because a capability exists in the DB.
+    """
+    while True:
+        db = database.SessionLocal()
+        try:
+            needed_ids = _sse_cap_ids_needed(db)
+
+            # Start tasks for newly needed capabilities
+            for cap_id in needed_ids:
+                if cap_id not in _sse_tasks or _sse_tasks[cap_id].done():
+                    cap = db.query(models.Capability).filter(models.Capability.id == cap_id).first()
+                    if cap:
+                        _sse_tasks[cap_id] = asyncio.create_task(
+                            _subscribe_to_sse(cap_id, cap.url)
+                        )
+                        print(f"[SSE manager] subscribed to cap {cap_id} ({cap.url})")
+
+            # Cancel tasks for capabilities no longer needed
+            for cap_id in list(_sse_tasks.keys()):
+                if cap_id not in needed_ids:
+                    _sse_tasks[cap_id].cancel()
+                    del _sse_tasks[cap_id]
+                    print(f"[SSE manager] unsubscribed from cap {cap_id}")
+        finally:
+            db.close()
+        await asyncio.sleep(30)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    sched_task = asyncio.create_task(_scheduler_loop())
+    sse_mgr_task = asyncio.create_task(_sse_manager_loop())
+    yield
+    sched_task.cancel()
+    sse_mgr_task.cancel()
+    for task in list(_sse_tasks.values()):
+        task.cancel()
+    for t in [sched_task, sse_mgr_task]:
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+
+
+application = FastAPI(lifespan=lifespan)
 
 application.add_middleware(
     CORSMiddleware,
@@ -163,6 +473,7 @@ def create_policy(policy: schemas.PolicyCreate, db: Session = Depends(get_db)):
         start_time=parsed.time_window["from_time"],
         end_time=parsed.time_window["to_time"],
         execution_plan=dag_utils.dag_to_dict(parsed.execution_dag),
+        repeat_interval_seconds=policy.repeat_interval_seconds,
     )
 
     db.add(db_policy)
@@ -436,35 +747,66 @@ async def execute_policy_stream(policy_id: int, db: Session = Depends(get_db)):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# SENSOR READINGS
+# ═══════════════════════════════════════════════════════════════════
+
+@application.get("/api/sensor-readings/", response_model=List[schemas.SensorReadingResponse])
+def get_latest_sensor_readings(db: Session = Depends(get_db)):
+    """Latest reading for each (device, capability) SSE pair."""
+    subq = db.query(
+        models.SensorReading.device_id,
+        models.SensorReading.capability_name,
+        func.max(models.SensorReading.id).label("max_id"),
+    ).group_by(
+        models.SensorReading.device_id,
+        models.SensorReading.capability_name,
+    ).subquery()
+
+    readings = db.query(models.SensorReading).join(
+        subq, models.SensorReading.id == subq.c.max_id
+    ).all()
+
+    return [
+        schemas.SensorReadingResponse(
+            id=r.id,
+            device_id=r.device_id,
+            device_name=r.device.name if r.device else "Unknown",
+            capability_name=r.capability_name,
+            data=r.data,
+            received_at=r.received_at,
+        )
+        for r in readings
+    ]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SCHEDULER (CRON TICK)
+# ═══════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════
+# VOICE TRANSCRIPTION
+# ═══════════════════════════════════════════════════════════════════
+
+@application.post("/api/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    """Transcribe audio using Groq Whisper."""
+    audio_data = await file.read()
+    try:
+        transcription = llm.groq_client.audio.transcriptions.create(
+            file=(file.filename or "recording.webm", audio_data),
+            model="whisper-large-v3-turbo",
+        )
+        return {"text": transcription.text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════
 # SCHEDULER (CRON TICK)
 # ═══════════════════════════════════════════════════════════════════
 
 @application.post("/api/cron/tick")
 async def trigger_scheduler(db: Session = Depends(get_db)):
-    """
-    Scheduler tick: checks current time against active policy windows.
-    For each matching policy, executes its DAG via the LangGraph executor.
-    """
-    now = datetime.now()
-    current_time_str = now.strftime("%H:%M")
-
-    active_policies = db.query(models.Policy).filter(models.Policy.is_active == True).all()
-    triggered = []
-
-    for policy in active_policies:
-        if policy.start_time <= current_time_str <= policy.end_time:
-            try:
-                run = await executor.execute_policy(policy.id, db, triggered_by="scheduler")
-                triggered.append({
-                    "policy_name": policy.name,
-                    "run_id": run.id,
-                    "status": run.status,
-                    "summary": run.summary,
-                })
-            except Exception as e:
-                triggered.append({
-                    "policy_name": policy.name,
-                    "error": str(e),
-                })
-
+    """Manual scheduler tick — same logic as the background loop."""
+    triggered, current_time_str = await _run_scheduler_tick(db)
     return {"status": "ok", "triggered_policies": triggered, "server_time": current_time_str}

@@ -14,12 +14,13 @@ import {
     Clock,
     AlertTriangle,
     Loader2,
+    Radio,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 
 const DAGView = dynamic(() => import("@/components/DAGView"), { ssr: false });
 
-// ─── Status badge helpers ──────────────────────────────────────
+// ─── Status helpers ────────────────────────────────────────────
 
 const statusColor: Record<string, string> = {
     pending: "bg-gray-100 text-gray-700",
@@ -31,56 +32,47 @@ const statusColor: Record<string, string> = {
 
 const StatusIcon = ({ status }: { status: string }) => {
     switch (status) {
-        case "completed":
-            return <CheckCircle2 className="w-4 h-4 text-green-500" />;
-        case "failed":
-            return <XCircle className="w-4 h-4 text-red-500" />;
-        case "partial_failure":
-            return <AlertTriangle className="w-4 h-4 text-yellow-500" />;
-        case "running":
-            return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />;
-        default:
-            return <Clock className="w-4 h-4 text-gray-400" />;
+        case "completed":   return <CheckCircle2 className="w-4 h-4 text-green-500" />;
+        case "failed":      return <XCircle className="w-4 h-4 text-red-500" />;
+        case "partial_failure": return <AlertTriangle className="w-4 h-4 text-yellow-500" />;
+        case "running":     return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />;
+        default:            return <Clock className="w-4 h-4 text-gray-400" />;
     }
 };
 
 function formatDate(iso?: string) {
     if (!iso) return "—";
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
+    return new Date(iso).toLocaleString(undefined, {
+        month: "short", day: "numeric",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
     });
 }
 
 function duration(start?: string, end?: string) {
     if (!start) return "—";
-    const s = new Date(start).getTime();
-    const e = end ? new Date(end).getTime() : Date.now();
-    const ms = e - s;
+    const ms = (end ? new Date(end) : new Date()).getTime() - new Date(start).getTime();
     if (ms < 1000) return `${ms}ms`;
     return `${(ms / 1000).toFixed(1)}s`;
 }
 
-// ─── Component ────────────────────────────────────────────────
+const isTerminal = (status: string) =>
+    ["completed", "failed", "partial_failure"].includes(status);
+
+// ─── Component ─────────────────────────────────────────────────
 
 export default function ExecutionsPage() {
     const [runs, setRuns] = useState<ExecutionRun[]>([]);
     const [selectedRun, setSelectedRun] = useState<ExecutionRunDetail | null>(null);
     const [loading, setLoading] = useState(true);
     const [detailLoading, setDetailLoading] = useState(false);
+    // tick forces duration to recompute every second while a run is live
+    const [, setTick] = useState(0);
 
     const fetchRuns = useCallback(async () => {
         try {
             const data = await getExecutions();
-            // Sort newest first
-            data.sort(
-                (a, b) =>
-                    new Date(b.started_at || "").getTime() -
-                    new Date(a.started_at || "").getTime()
+            data.sort((a, b) =>
+                new Date(b.started_at || "").getTime() - new Date(a.started_at || "").getTime()
             );
             setRuns(data);
         } catch (err) {
@@ -90,23 +82,41 @@ export default function ExecutionsPage() {
         }
     }, []);
 
-    useEffect(() => {
-        fetchRuns();
-    }, [fetchRuns]);
+    // Initial load
+    useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
-    // Auto-refresh every 5s while any run is still "running"
+    // Refresh list every 3s while any run is still "running"
     useEffect(() => {
-        const hasRunning = runs.some((r) => r.status === "running");
-        if (!hasRunning) return;
-        const iv = setInterval(fetchRuns, 5000);
+        if (!runs.some((r) => r.status === "running")) return;
+        const iv = setInterval(fetchRuns, 3000);
         return () => clearInterval(iv);
     }, [runs, fetchRuns]);
+
+    // ── Live detail polling while selected run is running ─────────
+    useEffect(() => {
+        if (!selectedRun || isTerminal(selectedRun.status)) return;
+
+        const iv = setInterval(async () => {
+            try {
+                const updated = await getExecutionDetail(selectedRun.id);
+                setSelectedRun(updated);
+            } catch {}
+        }, 1500);
+
+        return () => clearInterval(iv);
+    }, [selectedRun?.id, selectedRun?.status]);  // eslint-disable-line
+
+    // Tick every second so duration string re-renders while run is live
+    useEffect(() => {
+        if (!selectedRun || isTerminal(selectedRun.status)) return;
+        const iv = setInterval(() => setTick((t) => t + 1), 1000);
+        return () => clearInterval(iv);
+    }, [selectedRun?.id, selectedRun?.status]);  // eslint-disable-line
 
     const openDetail = async (runId: number) => {
         setDetailLoading(true);
         try {
-            const detail = await getExecutionDetail(runId);
-            setSelectedRun(detail);
+            setSelectedRun(await getExecutionDetail(runId));
         } catch (err) {
             console.error("Failed to fetch run detail", err);
         } finally {
@@ -114,8 +124,10 @@ export default function ExecutionsPage() {
         }
     };
 
-    // ─── Detail View ──────────────────────────────────────────
+    // ─── Detail View ──────────────────────────────────────────────
     if (selectedRun) {
+        const live = !isTerminal(selectedRun.status);
+
         return (
             <div className="space-y-6">
                 {/* Header */}
@@ -126,10 +138,17 @@ export default function ExecutionsPage() {
                     >
                         <ArrowLeft className="w-4 h-4 mr-1" /> Back
                     </button>
-                    <div>
-                        <h2 className="text-2xl font-bold text-gray-900">
-                            Execution Run #{selectedRun.id}
-                        </h2>
+                    <div className="flex-1">
+                        <div className="flex items-center gap-3">
+                            <h2 className="text-2xl font-bold text-gray-900">
+                                Execution Run #{selectedRun.id}
+                            </h2>
+                            {live && (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-600 animate-pulse">
+                                    <Radio className="w-3 h-3" /> LIVE
+                                </span>
+                            )}
+                        </div>
                         <p className="text-sm text-gray-500">
                             Policy: <span className="font-medium text-gray-700">{selectedRun.policy_name}</span>
                             &nbsp;·&nbsp;Triggered by {selectedRun.triggered_by}
@@ -137,24 +156,35 @@ export default function ExecutionsPage() {
                     </div>
                 </div>
 
-                {/* Stats row */}
+                {/* Stats */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-4">
                     <Stat label="Status" value={selectedRun.status} color={statusColor[selectedRun.status]} />
                     <Stat label="Started" value={formatDate(selectedRun.started_at)} />
-                    <Stat label="Duration" value={duration(selectedRun.started_at, selectedRun.completed_at)} />
+                    <Stat
+                        label="Duration"
+                        value={duration(selectedRun.started_at, selectedRun.completed_at)}
+                        color={live ? "bg-blue-50 text-blue-700" : undefined}
+                    />
                     {selectedRun.summary && (
                         <>
                             <Stat label="Success" value={`${selectedRun.summary.success}`} color="bg-green-50 text-green-700" />
-                            <Stat label="Failed" value={`${selectedRun.summary.failed}`} color={selectedRun.summary.failed > 0 ? "bg-red-50 text-red-700" : undefined} />
+                            <Stat label="Failed"  value={`${selectedRun.summary.failed}`}  color={selectedRun.summary.failed > 0 ? "bg-red-50 text-red-700" : undefined} />
                             <Stat label="Skipped" value={`${selectedRun.summary.skipped + selectedRun.summary.condition_not_met}`} />
                         </>
                     )}
                 </div>
 
-                {/* DAG with execution overlay */}
+                {/* DAG — updates live as steps come in */}
                 {selectedRun.execution_dag && (
                     <div className="bg-white shadow sm:rounded-lg p-4">
-                        <h3 className="text-sm font-medium text-gray-700 mb-3">Execution Graph</h3>
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-sm font-medium text-gray-700">Execution Graph</h3>
+                            {live && (
+                                <span className="text-xs text-blue-500 flex items-center gap-1">
+                                    <Loader2 className="w-3 h-3 animate-spin" /> updating every 1.5s
+                                </span>
+                            )}
+                        </div>
                         <DAGView
                             dag={selectedRun.execution_dag}
                             steps={selectedRun.steps}
@@ -165,8 +195,9 @@ export default function ExecutionsPage() {
 
                 {/* Steps table */}
                 <div className="bg-white shadow overflow-hidden sm:rounded-lg">
-                    <div className="px-4 py-4 border-b border-gray-200">
+                    <div className="px-4 py-4 border-b border-gray-200 flex items-center justify-between">
                         <h3 className="text-sm font-medium text-gray-700">Step Details</h3>
+                        {live && <span className="text-xs text-gray-400">{selectedRun.steps.length} step(s) recorded</span>}
                     </div>
                     <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -183,7 +214,7 @@ export default function ExecutionsPage() {
                             </thead>
                             <tbody className="divide-y divide-gray-100">
                                 {selectedRun.steps.map((step) => (
-                                    <tr key={step.id} className="hover:bg-gray-50">
+                                    <tr key={step.id} className={`transition-colors ${step.status === "running" ? "bg-blue-50" : "hover:bg-gray-50"}`}>
                                         <td className="px-4 py-2 font-mono text-xs">{step.node_id}</td>
                                         <td className="px-4 py-2">{step.device_name}</td>
                                         <td className="px-4 py-2">{step.capability_name}</td>
@@ -206,8 +237,12 @@ export default function ExecutionsPage() {
                                 ))}
                                 {selectedRun.steps.length === 0 && (
                                     <tr>
-                                        <td colSpan={7} className="px-4 py-6 text-center text-gray-500">
-                                            No steps recorded yet.
+                                        <td colSpan={7} className="px-4 py-6 text-center text-gray-400">
+                                            {live ? (
+                                                <span className="flex items-center justify-center gap-2">
+                                                    <Loader2 className="w-4 h-4 animate-spin" /> Waiting for steps...
+                                                </span>
+                                            ) : "No steps recorded."}
                                         </td>
                                     </tr>
                                 )}
@@ -219,16 +254,13 @@ export default function ExecutionsPage() {
         );
     }
 
-    // ─── List View ────────────────────────────────────────────
+    // ─── List View ────────────────────────────────────────────────
     return (
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <h2 className="text-2xl font-bold text-gray-900">Execution History</h2>
                 <button
-                    onClick={() => {
-                        setLoading(true);
-                        fetchRuns();
-                    }}
+                    onClick={() => { setLoading(true); fetchRuns(); }}
                     className="inline-flex items-center px-3 py-2 text-sm border border-gray-300 rounded-md text-gray-600 hover:text-gray-900 cursor-pointer"
                 >
                     <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
@@ -274,6 +306,9 @@ export default function ExecutionsPage() {
                                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${statusColor[run.status] || "bg-gray-100 text-gray-700"}`}>
                                                 <StatusIcon status={run.status} />
                                                 {run.status}
+                                                {run.status === "running" && (
+                                                    <span className="ml-1 w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping inline-block" />
+                                                )}
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 text-gray-500 capitalize">{run.triggered_by}</td>
@@ -283,9 +318,7 @@ export default function ExecutionsPage() {
                                             {run.summary ? (
                                                 <div className="flex gap-2 text-xs">
                                                     <span className="text-green-600 font-medium">{run.summary.success} ok</span>
-                                                    {run.summary.failed > 0 && (
-                                                        <span className="text-red-600 font-medium">{run.summary.failed} fail</span>
-                                                    )}
+                                                    {run.summary.failed > 0 && <span className="text-red-600 font-medium">{run.summary.failed} fail</span>}
                                                     {(run.summary.skipped + run.summary.condition_not_met) > 0 && (
                                                         <span className="text-gray-400">{run.summary.skipped + run.summary.condition_not_met} skip</span>
                                                     )}
@@ -302,7 +335,6 @@ export default function ExecutionsPage() {
                 )}
             </div>
 
-            {/* Loading overlay for detail fetch */}
             {detailLoading && (
                 <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50">
                     <div className="bg-white rounded-lg px-6 py-4 shadow-lg flex items-center gap-3">
@@ -315,7 +347,7 @@ export default function ExecutionsPage() {
     );
 }
 
-// ─── Helper sub-components ────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────
 
 function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
     return (
@@ -328,17 +360,11 @@ function Stat({ label, value, color }: { label: string; value: string; color?: s
 
 function stepStatusColor(status: string): string {
     switch (status) {
-        case "success":
-            return "bg-green-100 text-green-700";
-        case "failed":
-            return "bg-red-100 text-red-700";
-        case "running":
-            return "bg-blue-100 text-blue-700";
-        case "skipped":
-            return "bg-gray-100 text-gray-500";
-        case "condition_not_met":
-            return "bg-orange-100 text-orange-700";
-        default:
-            return "bg-gray-100 text-gray-700";
+        case "success":         return "bg-green-100 text-green-700";
+        case "failed":          return "bg-red-100 text-red-700";
+        case "running":         return "bg-blue-100 text-blue-700";
+        case "skipped":         return "bg-gray-100 text-gray-500";
+        case "condition_not_met": return "bg-orange-100 text-orange-700";
+        default:                return "bg-gray-100 text-gray-700";
     }
 }

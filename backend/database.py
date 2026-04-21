@@ -6,11 +6,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Use postgresql credentials from environment or fallback to a local default
-SQLALCHEMY_DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql+psycopg://postgres:postgres@localhost/policy_automation"
-)
+def _resolve_database_url() -> str:
+    database_url = os.getenv("DATABASE_URL")
+    if database_url:
+        return database_url
+
+    db_user = os.getenv("DB_USER", "postgres")
+    db_password = os.getenv("DB_PASSWORD", "postgres")
+    db_host = os.getenv("DB_HOST", "localhost")
+    db_port = os.getenv("DB_PORT", "5432")
+    db_name = os.getenv("DB_NAME", "postgres")
+    return f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+
+
+SQLALCHEMY_DATABASE_URL = _resolve_database_url()
 
 # SQLite uses connect_args={"check_same_thread": False}, but PostgreSQL doesn't need it.
 engine = create_engine(SQLALCHEMY_DATABASE_URL)

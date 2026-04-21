@@ -7,8 +7,10 @@ All endpoints from comprehensive_scenarios.md are simulated here.
 
 import random
 import asyncio
+import json
 from datetime import datetime
 from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Mock IoT Device Server")
@@ -489,6 +491,82 @@ async def roof_open(request: Request):
 async def roof_close(request: Request):
     await _simulate_delay()
     return _make_response("/farm/roof/close", await _safe_json(request), {"status": "closed"})
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SSE SENSOR STREAMS
+# ═══════════════════════════════════════════════════════════════════
+
+@app.get("/factory/sensor/temp/stream")
+async def factory_temp_stream():
+    """Streams factory floor temperature every 2 seconds.
+    Mostly 20-35°C; spikes to 36-45°C ~15% of the time to simulate overheating."""
+    async def generate():
+        while True:
+            if random.random() < 0.15:
+                temp = round(random.uniform(36.0, 45.0), 1)   # overheating spike
+            else:
+                temp = round(random.uniform(20.0, 35.0), 1)
+            event = {"temp": temp, "unit": "celsius", "timestamp": datetime.now().isoformat()}
+            yield f"data: {json.dumps(event)}\n\n"
+            await asyncio.sleep(2)
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/farm/sensor/moisture/stream")
+async def farm_moisture_stream():
+    """Streams soil moisture every 3 seconds.
+    Mostly 40-70%; drops below 30% ~15% of the time to simulate dry soil."""
+    async def generate():
+        while True:
+            if random.random() < 0.15:
+                moisture = round(random.uniform(10.0, 29.9), 1)   # dry soil
+            else:
+                moisture = round(random.uniform(40.0, 70.0), 1)
+            event = {"moisture": moisture, "unit": "percent", "timestamp": datetime.now().isoformat()}
+            yield f"data: {json.dumps(event)}\n\n"
+            await asyncio.sleep(3)
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/home/motion/stream")
+async def home_motion_stream():
+    """Streams motion sensor events every 2 seconds.
+    Mostly no motion; detects motion ~20% of the time across random zones."""
+    _zones = ["living_room", "hallway", "kitchen", "front_door", "backyard"]
+    async def generate():
+        while True:
+            detected = random.random() < 0.20
+            event = {
+                "motion": detected,
+                "zone": random.choice(_zones) if detected else None,
+                "timestamp": datetime.now().isoformat(),
+            }
+            yield f"data: {json.dumps(event)}\n\n"
+            await asyncio.sleep(2)
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@app.get("/hospital/monitor/vitals/stream")
+async def hospital_vitals_stream():
+    """Streams patient vitals every 2 seconds.
+    Heart rate 60-100 bpm; SpO2 94-100%. Occasional out-of-range values (~10%)."""
+    async def generate():
+        while True:
+            if random.random() < 0.10:
+                heart_rate = random.randint(101, 130)   # tachycardia
+                spo2 = random.randint(88, 93)           # low oxygen
+            else:
+                heart_rate = random.randint(60, 100)
+                spo2 = random.randint(95, 100)
+            event = {
+                "heart_rate": heart_rate,
+                "spo2": spo2,
+                "timestamp": datetime.now().isoformat(),
+            }
+            yield f"data: {json.dumps(event)}\n\n"
+            await asyncio.sleep(2)
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 # ═══════════════════════════════════════════════════════════════════

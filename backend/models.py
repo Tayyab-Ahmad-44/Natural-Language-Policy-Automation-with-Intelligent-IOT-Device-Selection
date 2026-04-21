@@ -50,7 +50,9 @@ class Policy(Base):
     start_time = Column(String)  # HH:MM
     end_time = Column(String)    # HH:MM
     is_active = Column(Boolean, default=True)
-    
+    repeat_interval_seconds = Column(Integer, nullable=True)  # None = run once per window entry
+    last_executed_at = Column(String, nullable=True)           # ISO timestamp of last scheduler run
+
     # Store the execution plan as DAG JSON: {"nodes": [...]}
     # Also supports legacy flat list format (auto-migrated at runtime)
     execution_plan = Column(JSON, default=[])
@@ -61,6 +63,20 @@ class Policy(Base):
     task = relationship("Task", back_populates="policies")
     
     runs = relationship("ExecutionRun", back_populates="policy", cascade="all, delete-orphan")
+
+
+# ─── Sensor Readings (SSE ingestion) ─────────────────────────────
+
+class SensorReading(Base):
+    __tablename__ = "sensor_readings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(Integer, ForeignKey('devices.id'))
+    capability_name = Column(String, index=True)
+    data = Column(JSON)
+    received_at = Column(String)
+
+    device = relationship("Device")
 
 
 # ─── Execution Tracking ───────────────────────────────────────────

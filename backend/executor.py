@@ -186,7 +186,12 @@ def resolve_capabilities(dag: schemas.ExecutionDAG, db: Session) -> Dict[str, Di
         device_caps = lookup.get(node.device.lower(), {})
         cap = device_caps.get(node.capability.lower())
         if cap:
-            result[node.id] = {"url": cap.url, "method": cap.method.upper()}
+            result[node.id] = {
+                "url": cap.url,
+                "method": cap.method.upper(),
+                "device_id": device.id,
+                "cap_name": cap.name,
+            }
         else:
             result[node.id] = None  # Device/capability not found
     return result
@@ -261,9 +266,43 @@ def make_node_fn(
                 "skipped_nodes": new_skipped,
             }
 
-        # Make the HTTP call
+        # SSE capability — read latest sensor reading from DB instead of making HTTP call
         url = cap_info["url"]
         method = cap_info["method"]
+        if method == "SSE":
+            reading = db.query(models.SensorReading).filter(
+                models.SensorReading.device_id == cap_info["device_id"],
+                models.SensorReading.capability_name == cap_info["cap_name"],
+            ).order_by(models.SensorReading.id.desc()).first()
+
+            completed = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            if reading:
+                _update_step_status(db, run_id, node.id, "success", now, completed,
+                                    response_data=reading.data, http_status_code=200)
+                return {
+                    "node_results": {
+                        node.id: {"status": "success", "response_data": reading.data, "error": None, "http_status_code": 200}
+                    },
+                    "failed_nodes": [],
+                    "skipped_nodes": [],
+                }
+            else:
+                error_msg = f"No sensor reading available yet for {node.device}/{node.capability}"
+                _update_step_status(db, run_id, node.id, "failed", now, completed, error_msg=error_msg)
+                new_skipped = []
+                if node.on_failure == "halt_branch":
+                    new_skipped = list(_get_all_dependents(node.id, adj))
+                elif node.on_failure == "skip_dependents":
+                    new_skipped = adj.get(node.id, [])
+                return {
+                    "node_results": {
+                        node.id: {"status": "failed", "response_data": None, "error": error_msg, "http_status_code": None}
+                    },
+                    "failed_nodes": [node.id],
+                    "skipped_nodes": new_skipped,
+                }
+
+        # Make the HTTP call
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 if method in ("POST", "PUT", "PATCH"):

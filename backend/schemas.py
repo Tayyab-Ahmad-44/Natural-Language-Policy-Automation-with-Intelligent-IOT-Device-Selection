@@ -68,13 +68,15 @@ class PolicyBase(BaseModel):
     original_text: str
 
 class PolicyCreate(PolicyBase):
-    pass
+    repeat_interval_seconds: Optional[int] = None
 
 class Policy(PolicyBase):
     id: int
     start_time: str
     end_time: str
     is_active: bool
+    repeat_interval_seconds: Optional[int] = None
+    last_executed_at: Optional[str] = None
     execution_plan: Any = None   # stores ExecutionDAG dict or legacy flat list
     task_id: Optional[int] = None
 
@@ -155,3 +157,14 @@ class ExecutionRunResponse(BaseModel):
 class ExecutionRunDetail(ExecutionRunResponse):
     steps: List[ExecutionStepResponse] = []
     execution_dag: Optional[ExecutionDAG] = None  # the DAG that was executed
+
+
+# ─── Sensor Readings ──────────────────────────────────────────────
+
+class SensorReadingResponse(BaseModel):
+    id: int
+    device_id: int
+    device_name: str
+    capability_name: str
+    data: Any
+    received_at: str

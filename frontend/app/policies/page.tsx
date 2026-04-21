@@ -1,8 +1,9 @@
 "use client";
 import { useState, useEffect } from 'react';
-import api, { Policy, PolicyPreviewResponse, ExecutionRunDetail, executePolicy } from '@/lib/api';
-import { Plus, Check, AlertCircle, Play, ChevronDown, ChevronUp } from 'lucide-react';
+import api, { Policy, PolicyPreviewResponse, ExecutionRunDetail, ExecutionStep, getExecutionDetail } from '@/lib/api';
+import { Plus, Check, AlertCircle, Play, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import dynamic from 'next/dynamic';
+import VoiceButton from '@/components/VoiceButton';
 
 const DAGView = dynamic(() => import('@/components/DAGView'), { ssr: false });
 
@@ -18,10 +19,12 @@ export default function PoliciesPage() {
     const [policies, setPolicies] = useState<Policy[]>([]);
     const [policyInput, setPolicyInput] = useState('');
     const [policyName, setPolicyName] = useState('');
+    const [repeatInterval, setRepeatInterval] = useState('');
     const [preview, setPreview] = useState<PolicyPreviewResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [executing, setExecuting] = useState<number | null>(null);
     const [executionResult, setExecutionResult] = useState<ExecutionRunDetail | null>(null);
+    const [liveSteps, setLiveSteps] = useState<Record<string, Partial<ExecutionStep>>>({});
     const [expandedPolicy, setExpandedPolicy] = useState<number | null>(null);
 
     useEffect(() => {
@@ -56,9 +59,15 @@ export default function PoliciesPage() {
         if (!policyName || !policyInput) return;
         setLoading(true);
         try {
-            await api.post('/policies/', { name: policyName, original_text: policyInput });
+            const intervalVal = repeatInterval.trim() !== '' ? parseInt(repeatInterval, 10) : null;
+            await api.post('/policies/', {
+                name: policyName,
+                original_text: policyInput,
+                repeat_interval_seconds: intervalVal,
+            });
             setPolicyName('');
             setPolicyInput('');
+            setRepeatInterval('');
             setPreview(null);
             fetchPolicies();
         } catch (error) {
@@ -71,10 +80,49 @@ export default function PoliciesPage() {
     const handleExecute = async (policyId: number) => {
         setExecuting(policyId);
         setExecutionResult(null);
+        setLiveSteps({});
+        setExpandedPolicy(policyId);
+
         try {
-            const result = await executePolicy(policyId);
-            setExecutionResult(result);
-            setExpandedPolicy(policyId);
+            const response = await fetch(
+                `http://localhost:8000/api/policies/${policyId}/execute/stream`,
+                { method: 'POST' }
+            );
+            if (!response.body) throw new Error('No response body');
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() ?? '';
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    try {
+                        const evt = JSON.parse(line.slice(6));
+                        if (evt.type === 'node_completed') {
+                            setLiveSteps(prev => ({
+                                ...prev,
+                                [evt.node_id]: {
+                                    node_id: evt.node_id,
+                                    status: evt.status,
+                                    response_data: evt.response_data ?? undefined,
+                                    error_message: evt.error ?? undefined,
+                                    http_status_code: evt.http_status_code ?? undefined,
+                                } as ExecutionStep,
+                            }));
+                        } else if (evt.type === 'run_completed' || evt.type === 'run_failed') {
+                            const detail = await getExecutionDetail(evt.run_id);
+                            setExecutionResult(detail);
+                        }
+                    } catch { /* ignore parse errors */ }
+                }
+            }
         } catch (error) {
             console.error("Failed to execute policy", error);
             alert("Execution failed. Check if mock device server is running.");
@@ -109,13 +157,33 @@ export default function PoliciesPage() {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700">Natural Language Rule</label>
+                            <div className="flex items-center justify-between mb-1">
+                                <label className="block text-sm font-medium text-gray-700">Natural Language Rule</label>
+                                <VoiceButton
+                                    onTranscript={(text) => setPolicyInput(prev => prev ? `${prev} ${text}` : text)}
+                                    disabled={loading}
+                                />
+                            </div>
                             <textarea
                                 rows={4}
-                                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-black"
+                                className="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-black"
                                 placeholder="e.g. If someone enters Room2 from 10pm to 5am, ring the alarm of that room"
                                 value={policyInput}
                                 onChange={(e) => setPolicyInput(e.target.value)}
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700">
+                                Repeat Interval (seconds)
+                                <span className="ml-1 text-xs font-normal text-gray-400">— leave empty to run once per window</span>
+                            </label>
+                            <input
+                                type="number"
+                                min={1}
+                                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-black"
+                                placeholder="e.g. 60"
+                                value={repeatInterval}
+                                onChange={(e) => setRepeatInterval(e.target.value)}
                             />
                         </div>
                         <div className="flex gap-3">
@@ -216,6 +284,16 @@ export default function PoliciesPage() {
                                         <div className="flex flex-col items-end">
                                             <p className="text-sm text-gray-900 font-bold">{policy.start_time} - {policy.end_time}</p>
                                             <p className="text-xs text-gray-500">{countActions(policy.execution_plan)} actions</p>
+                                            <p className="text-xs text-indigo-500 font-medium">
+                                                {policy.repeat_interval_seconds
+                                                    ? `every ${policy.repeat_interval_seconds}s`
+                                                    : 'once per window'}
+                                            </p>
+                                            {policy.last_executed_at && (
+                                                <p className="text-xs text-gray-400">
+                                                    last run {new Date(policy.last_executed_at).toLocaleTimeString()}
+                                                </p>
+                                            )}
                                         </div>
                                         <button
                                             onClick={() => handleExecute(policy.id)}
@@ -253,15 +331,30 @@ export default function PoliciesPage() {
                                     </div>
                                 </div>
 
-                                {/* Expanded DAG view with execution results */}
+                                {/* Expanded DAG view with live / completed execution results */}
                                 {isExpanded && dag && (
                                     <div className="mt-4">
-                                        {executionResult && executionResult.policy_id === policy.id ? (
+                                        {executing === policy.id ? (
+                                            // ── Streaming live ──────────────────────────────
                                             <div className="space-y-3">
-                                                <div className={`flex items-center gap-2 px-3 py-2 rounded text-sm font-medium ${executionResult.status === "completed" ? "bg-green-50 text-green-700" :
-                                                        executionResult.status === "failed" ? "bg-red-50 text-red-700" :
-                                                            "bg-yellow-50 text-yellow-700"
-                                                    }`}>
+                                                <div className="flex items-center gap-2 px-3 py-2 rounded text-sm font-medium bg-blue-50 text-blue-700">
+                                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                                    Executing — nodes update as they complete
+                                                </div>
+                                                <DAGView
+                                                    dag={dag}
+                                                    steps={Object.values(liveSteps) as ExecutionStep[]}
+                                                    height="400px"
+                                                />
+                                            </div>
+                                        ) : executionResult && executionResult.policy_id === policy.id ? (
+                                            // ── Completed ───────────────────────────────────
+                                            <div className="space-y-3">
+                                                <div className={`flex items-center gap-2 px-3 py-2 rounded text-sm font-medium ${
+                                                    executionResult.status === "completed" ? "bg-green-50 text-green-700" :
+                                                    executionResult.status === "failed"    ? "bg-red-50 text-red-700" :
+                                                                                             "bg-yellow-50 text-yellow-700"
+                                                }`}>
                                                     Run #{executionResult.id}: {executionResult.status}
                                                     {executionResult.summary && (
                                                         <span className="ml-2 text-xs opacity-75">

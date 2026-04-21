@@ -66,6 +66,8 @@ export interface Policy {
     start_time: string;
     end_time: string;
     is_active: boolean;
+    repeat_interval_seconds?: number | null;
+    last_executed_at?: string | null;
     execution_plan: ExecutionDAG | any[];  // DAG format or legacy flat list
     task_id?: number;
 }
@@ -117,6 +119,17 @@ export interface ExecutionRun {
 export interface ExecutionRunDetail extends ExecutionRun {
     steps: ExecutionStep[];
     execution_dag?: ExecutionDAG;
+}
+
+// ─── Sensor Readings ─────────────────────────────────────────────
+
+export interface SensorReadingResponse {
+    id: number;
+    device_id: number;
+    device_name: string;
+    capability_name: string;
+    data: any;
+    received_at: string;
 }
 
 // ─── API Functions ───────────────────────────────────────────────

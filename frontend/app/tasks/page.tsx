@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import api, { Task, Policy } from '@/lib/api';
 import { Plus, ChevronDown, ChevronRight, Trash2, Loader2 } from 'lucide-react';
+import VoiceButton from '@/components/VoiceButton';
 
 function getPolicyActions(policy: Policy): Array<{ id: string; device: string; capability: string; args: Record<string, any> }> {
     const plan = policy.execution_plan;
@@ -113,11 +114,17 @@ export default function TasksPage() {
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700">Description (Natural Language)</label>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="block text-sm font-medium text-gray-700">Description (Natural Language)</label>
+                            <VoiceButton
+                                onTranscript={(text) => setNewTaskDesc(prev => prev ? `${prev} ${text}` : text)}
+                                disabled={loading}
+                            />
+                        </div>
                         <textarea
                             required
                             rows={3}
-                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-black"
+                            className="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-black"
                             placeholder="e.g. Lock all doors and turn off lights at 11pm"
                             value={newTaskDesc}
                             onChange={(e) => setNewTaskDesc(e.target.value)}
