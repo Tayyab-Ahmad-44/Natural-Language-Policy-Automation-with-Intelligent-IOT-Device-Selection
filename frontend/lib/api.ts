@@ -11,7 +11,7 @@ export interface Capability {
     name: string;
     url: string;
     method: string;
-    input_schema: any;
+    input_schema: unknown;
 }
 
 export interface Device {
@@ -24,18 +24,19 @@ export interface Device {
 // ─── DAG Types ────────────────────────────────────────────────────
 
 export interface ExecutionCondition {
-    type: 'on_success' | 'on_failure' | 'on_value';
+    type: 'on_success' | 'on_failure' | 'on_value' | 'all' | 'any';
     source_node_id?: string;
     field?: string;
     operator?: '>' | '<' | '==' | '!=' | '>=' | '<=' | 'contains';
-    value?: any;
+    value?: unknown;
+    conditions?: ExecutionCondition[];
 }
 
 export interface ExecutionNode {
     id: string;
     device: string;
     capability: string;
-    args: Record<string, any>;
+    args: Record<string, unknown>;
     dependencies: string[];
     condition?: ExecutionCondition | null;
     on_failure: 'halt_branch' | 'skip_dependents' | 'ignore';
@@ -68,7 +69,7 @@ export interface Policy {
     is_active: boolean;
     repeat_interval_seconds?: number | null;
     last_executed_at?: string | null;
-    execution_plan: ExecutionDAG | any[];  // DAG format or legacy flat list
+    execution_plan: ExecutionDAG | Record<string, unknown>[];  // DAG format or legacy flat list
     task_id?: number;
 }
 
@@ -90,11 +91,11 @@ export interface ExecutionStep {
     node_id: string;
     device_name: string;
     capability_name: string;
-    args: Record<string, any>;
+    args: Record<string, unknown>;
     status: 'pending' | 'running' | 'success' | 'failed' | 'skipped' | 'condition_not_met';
     started_at?: string;
     completed_at?: string;
-    response_data?: Record<string, any>;
+    response_data?: Record<string, unknown>;
     error_message?: string;
     http_status_code?: number;
 }
@@ -128,7 +129,7 @@ export interface SensorReadingResponse {
     device_id: number;
     device_name: string;
     capability_name: string;
-    data: any;
+    data: unknown;
     received_at: string;
 }
 

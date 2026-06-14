@@ -39,6 +39,7 @@ This document provides 5 detailed scenarios to test the versatility of the IoT P
     *   `Record`: POST `http://home/cam/record` `{"duration": "integer"}`
     *   `Pan`: POST `http://home/cam/pan` `{"angle": "integer"}`
     *   `Snapshot`: POST `http://home/cam/snap` `{}`
+    *   `Analyze Scene`: VLM `http://home/cam/snap` `{"prompt": "string", "target_labels": ["string"], "source_method": "POST"}`
 
 ### Tasks
 1.  **Morning Routine**
@@ -47,6 +48,8 @@ This document provides 5 detailed scenarios to test the versatility of the IoT P
     > "At 11:00 PM, lock the front door, close the garage door, turn off the living room light, and set the security camera to record for 60 seconds."
 3.  **Party Mode**
     > "At 8:00 PM, set the living room light color to '#FF00FF', dim lights to 70%, play 'Party Hits' on the smart speaker at volume 80, and set the thermostat fan to 'on'."
+4.  **Visual Safety Check**
+    > "If the security camera sees smoke or fire, turn the living room light red and start recording for 60 seconds."
 
 ---
 
@@ -81,6 +84,7 @@ This document provides 5 detailed scenarios to test the versatility of the IoT P
 8.  **Quality Camera** (Type: Camera)
     *   `Inspect`: POST `http://factory/cam/inspect` `{"mode": "string"}`
     *   `Zoom`: POST `http://factory/cam/zoom` `{"level": "float"}`
+    *   `Analyze Defects`: VLM `http://factory/cam/inspect` `{"prompt": "string", "target_labels": ["defect", "crack", "misalignment"], "source_method": "POST", "capture_args": {"mode": "visual"}}`
 
 ### Tasks
 1.  **Emergency Shutdown**
@@ -89,6 +93,8 @@ This document provides 5 detailed scenarios to test the versatility of the IoT P
     > "At 08:00, start the conveyor belt at speed 50, set the cooling fan to 1500 RPM, move the robotic arm to position (0, 10, 50), and turn the warning light to solid green."
 3.  **Maintenance Cycle**
     > "At 14:00, stop the conveyor belt, silence the siren, calibrate the temp sensor, and move the robotic arm to position (0, 0, 0) for inspection."
+4.  **Vision Quality Gate**
+    > "If the quality camera detects a defect or misalignment, stop the conveyor belt, alert the emergency siren at warning level, and flash the warning light yellow for 30 seconds."
 
 ---
 

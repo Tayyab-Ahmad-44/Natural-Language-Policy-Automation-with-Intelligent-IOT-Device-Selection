@@ -56,6 +56,20 @@ Output:
     ]
   }
 }
+
+EXAMPLE 4 — Camera image analysis with VLM:
+User Policy: "If the security camera sees smoke or fire, turn on the warning light red and start recording for 60 seconds."
+Output:
+{
+  "time_window": {"from_time": "00:00", "to_time": "23:59"},
+  "execution_dag": {
+    "nodes": [
+      {"id": "step_1", "device": "Security Camera", "capability": "Analyze Scene", "args": {"prompt": "Detect whether smoke or fire is visible", "target_labels": ["smoke", "fire"]}, "dependencies": [], "condition": null, "on_failure": "halt_branch"},
+      {"id": "step_2", "device": "Warning Light", "capability": "Solid", "args": {"color": "red"}, "dependencies": ["step_1"], "condition": {"type": "all", "conditions": [{"type": "on_value", "source_node_id": "step_1", "field": "detected", "operator": "==", "value": true}, {"type": "on_value", "source_node_id": "step_1", "field": "confidence", "operator": ">=", "value": 0.7}]}, "on_failure": "ignore"},
+      {"id": "step_3", "device": "Security Camera", "capability": "Record", "args": {"duration": 60}, "dependencies": ["step_1"], "condition": {"type": "all", "conditions": [{"type": "on_value", "source_node_id": "step_1", "field": "detected", "operator": "==", "value": true}, {"type": "on_value", "source_node_id": "step_1", "field": "confidence", "operator": ">=", "value": 0.7}]}, "on_failure": "ignore"}
+    ]
+  }
+}
 """
 
 DAG_SCHEMA_INSTRUCTIONS = """
@@ -73,10 +87,20 @@ Each node has:
     - {"type": "on_success"}: same as null — execute when all deps succeed
     - {"type": "on_failure"}: execute only if a dependency FAILED
     - {"type": "on_value", "source_node_id": "step_X", "field": "fieldname", "operator": ">", "value": 30}: execute only if a specific field in a dependency's response meets the condition. Operators: ">", "<", "==", "!=", ">=", "<=", "contains"
+    - {"type": "all", "conditions": [...]}: execute only when every nested condition is true
+    - {"type": "any", "conditions": [...]}: execute when at least one nested condition is true
 - "on_failure": what happens if THIS node fails:
     - "halt_branch": all nodes that depend on this one (and their dependents) are skipped. Use for CRITICAL actions (emergency stops, locks, sensors providing data for decisions)
     - "skip_dependents": only direct dependents are skipped, not transitive ones
     - "ignore": treat failure as success — dependents still execute. Use for non-critical/ambient actions (music, lights in non-emergency contexts)
+
+VLM CAMERA CAPABILITIES:
+- If an available camera capability has method "VLM", treat it as a data-producing visual sensor node.
+- Use a short "prompt" arg that states exactly what to look for in the image.
+- Optional VLM args include: "target_labels"/"labels", "image_url", "image_base64", "video_path", "video_url", "video_frame_count", "video_frame_interval_seconds", "source_method", "capture_args", "provider", and "model".
+- VLM responses expose JSON fields for conditions: "detected" (boolean), "labels" (list), "summary" (string), "confidence" (0-1), and "observations" (object).
+- Downstream actions that depend on visual evidence should use on_value conditions against fields like "detected", "confidence", or "labels".
+- For fire/safety detections, prefer an "all" condition requiring both detected == true and confidence >= 0.7 before triggering actions.
 
 RULES FOR BUILDING THE DAG:
 1. Actions that are INDEPENDENT should have no dependencies (empty list) — they run in parallel

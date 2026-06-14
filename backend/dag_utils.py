@@ -51,18 +51,7 @@ def validate_dag(dag: schemas.ExecutionDAG) -> schemas.DAGValidation:
 
     # 3. Check condition source references
     for node in dag.nodes:
-        if node.condition and node.condition.type == "on_value":
-            src = node.condition.source_node_id
-            if src and src not in node_ids:
-                errors.append(
-                    f"Node '{node.id}' condition references non-existent "
-                    f"source node '{src}'"
-                )
-            if src and src not in node.dependencies:
-                errors.append(
-                    f"Node '{node.id}' condition source '{src}' is not in "
-                    f"its dependencies list"
-                )
+        _validate_condition_references(node, node.condition, node_ids, errors)
 
     # 4. Cycle detection via Kahn's algorithm
     in_degree: Dict[str, int] = {nid: 0 for nid in node_ids}
@@ -87,6 +76,38 @@ def validate_dag(dag: schemas.ExecutionDAG) -> schemas.DAGValidation:
         errors.append("DAG contains a cycle")
 
     return schemas.DAGValidation(valid=len(errors) == 0, errors=errors)
+
+
+def _validate_condition_references(
+    node: schemas.ExecutionNode,
+    condition: schemas.ExecutionCondition | None,
+    node_ids: set,
+    errors: List[str],
+) -> None:
+    """Validate condition source refs, including nested all/any conditions."""
+    if condition is None:
+        return
+
+    if condition.type == "on_value":
+        src = condition.source_node_id
+        if src and src not in node_ids:
+            errors.append(
+                f"Node '{node.id}' condition references non-existent "
+                f"source node '{src}'"
+            )
+        if src and src not in node.dependencies:
+            errors.append(
+                f"Node '{node.id}' condition source '{src}' is not in "
+                f"its dependencies list"
+            )
+        return
+
+    if condition.type in ("all", "any"):
+        nested = condition.conditions or []
+        if not nested:
+            errors.append(f"Node '{node.id}' has empty '{condition.type}' condition group")
+        for child in nested:
+            _validate_condition_references(node, child, node_ids, errors)
 
 
 # ──────────────────────────────────────────────────────────────────

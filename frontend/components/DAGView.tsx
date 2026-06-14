@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useCallback } from "react";
+import React, { useMemo } from "react";
 import {
     ReactFlow,
     Background,
@@ -33,6 +33,18 @@ const FAILURE_BADGES: Record<string, { label: string; color: string }> = {
     ignore: { label: "IGN", color: "bg-gray-100 text-gray-500" },
 };
 
+function conditionLabel(condition: ExecutionNode["condition"]): string {
+    if (!condition) return "";
+    if (condition.type === "on_value") {
+        return `if ${condition.field} ${condition.operator} ${String(condition.value)}`;
+    }
+    if (condition.type === "all" || condition.type === "any") {
+        const parts = condition.conditions?.map(conditionLabel).filter(Boolean) || [];
+        return `${condition.type.toUpperCase()}(${parts.join(", ")})`;
+    }
+    return condition.type.replace("_", " ");
+}
+
 // ─── Custom Node Component ──────────────────────────────────────
 
 interface DeviceNodeData {
@@ -47,7 +59,7 @@ function DeviceActionNode({ data }: NodeProps<Node<DeviceNodeData>>) {
     const colors = STATUS_COLORS[status] || STATUS_COLORS.default;
     const failureBadge = FAILURE_BADGES[dagNode.on_failure];
 
-    const hasCondition = dagNode.condition && dagNode.condition.type === "on_value";
+    const conditionText = conditionLabel(dagNode.condition);
 
     return (
         <div className={`px-4 py-3 rounded-xl border-2 shadow-sm min-w-[200px] ${colors.bg} ${colors.border}`}>
@@ -77,9 +89,9 @@ function DeviceActionNode({ data }: NodeProps<Node<DeviceNodeData>>) {
             )}
 
             {/* Condition badge */}
-            {hasCondition && dagNode.condition && (
+            {conditionText && (
                 <div className="mt-1.5 text-[10px] bg-yellow-50 border border-yellow-200 rounded px-2 py-0.5 text-yellow-700">
-                    if {dagNode.condition.field} {dagNode.condition.operator} {String(dagNode.condition.value)}
+                    {conditionText}
                 </div>
             )}
 
@@ -176,6 +188,8 @@ function dagToFlow(
             let label = "";
             if (dagNode.condition?.type === "on_value" && dagNode.condition.source_node_id === depId) {
                 label = `${dagNode.condition.field} ${dagNode.condition.operator} ${dagNode.condition.value}`;
+            } else if (dagNode.condition?.type === "all" || dagNode.condition?.type === "any") {
+                label = dagNode.condition.type.toUpperCase();
             } else if (dagNode.condition?.type === "on_failure") {
                 label = "on failure";
             }
@@ -185,19 +199,19 @@ function dagToFlow(
                 source: depId,
                 target: dagNode.id,
                 label: label || undefined,
-                animated: dagNode.condition?.type === "on_value",
+                animated: dagNode.condition?.type === "on_value" || dagNode.condition?.type === "all" || dagNode.condition?.type === "any",
                 style: {
-                    stroke: dagNode.condition?.type === "on_value" ? "#f59e0b" :
+                    stroke: dagNode.condition?.type === "on_value" || dagNode.condition?.type === "all" || dagNode.condition?.type === "any" ? "#f59e0b" :
                         dagNode.condition?.type === "on_failure" ? "#ef4444" : "#6366f1",
                     strokeWidth: 2,
                 },
                 labelStyle: {
                     fontSize: 10,
                     fontWeight: 600,
-                    fill: dagNode.condition?.type === "on_value" ? "#92400e" : "#4338ca",
+                    fill: dagNode.condition?.type === "on_value" || dagNode.condition?.type === "all" || dagNode.condition?.type === "any" ? "#92400e" : "#4338ca",
                 },
                 labelBgStyle: {
-                    fill: dagNode.condition?.type === "on_value" ? "#fef3c7" : "#eef2ff",
+                    fill: dagNode.condition?.type === "on_value" || dagNode.condition?.type === "all" || dagNode.condition?.type === "any" ? "#fef3c7" : "#eef2ff",
                     fillOpacity: 0.9,
                 },
                 labelBgPadding: [6, 3] as [number, number],

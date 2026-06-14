@@ -53,7 +53,7 @@ export default function DevicesPage() {
             setNewCapName('');
             setNewCapUrl('');
             setNewCapSchema('{}');
-        } catch (e) {
+        } catch {
             alert("Invalid JSON schema");
         }
     };
@@ -131,7 +131,7 @@ export default function DevicesPage() {
             setEditNewCapName('');
             setEditNewCapUrl('');
             setEditNewCapSchema('{}');
-        } catch (e) {
+        } catch {
             alert("Invalid JSON schema");
         }
     };
@@ -153,7 +153,7 @@ export default function DevicesPage() {
                 // and parse on save, but for simplicity here we try to parse it.
                 const schema = JSON.parse(value);
                 newCaps[index] = { ...newCaps[index], [field]: schema };
-            } catch (error) {
+            } catch {
                 // To allow user to type and have intermediate invalid JSON, we really should 
                 // not throw an alert on every keystroke. 
                 // Best to ignore and only validate on Add/Save, but to keep capability.input_schema
@@ -254,6 +254,7 @@ export default function DevicesPage() {
                                     <option>POST</option>
                                     <option>PUT</option>
                                     <option>SSE</option>
+                                    <option>VLM</option>
                                 </select>
                             </div>
                             <div className="md:col-span-1">
@@ -444,6 +445,7 @@ export default function DevicesPage() {
                                             <option>POST</option>
                                             <option>PUT</option>
                                             <option>SSE</option>
+                                            <option>VLM</option>
                                         </select>
                                     </div>
                                     <div className="md:col-span-1">
@@ -499,6 +501,7 @@ export default function DevicesPage() {
                                                     <option>POST</option>
                                                     <option>PUT</option>
                                                     <option>SSE</option>
+                                                    <option>VLM</option>
                                                 </select>
                                             </div>
                                             <div className="md:col-span-1">

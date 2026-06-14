@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Settings, Shield, Calendar } from "lucide-react";
+import { Settings, Shield, Calendar } from "lucide-react";
 
 export default function Home() {
   return (

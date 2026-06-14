@@ -23,6 +23,7 @@ from langgraph.graph import StateGraph, START, END
 import models
 import schemas
 import dag_utils
+import vision
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -92,6 +93,14 @@ def evaluate_condition(
             if result.get("status") == "failed":
                 return True
         return False
+
+    if condition.type == "all":
+        nested = condition.conditions or []
+        return all(evaluate_condition(child, dependencies, node_results) for child in nested)
+
+    if condition.type == "any":
+        nested = condition.conditions or []
+        return any(evaluate_condition(child, dependencies, node_results) for child in nested)
 
     if condition.type == "on_value":
         src_id = condition.source_node_id
@@ -294,6 +303,42 @@ def make_node_fn(
                     new_skipped = list(_get_all_dependents(node.id, adj))
                 elif node.on_failure == "skip_dependents":
                     new_skipped = adj.get(node.id, [])
+                return {
+                    "node_results": {
+                        node.id: {"status": "failed", "response_data": None, "error": error_msg, "http_status_code": None}
+                    },
+                    "failed_nodes": [node.id],
+                    "skipped_nodes": new_skipped,
+                }
+
+        # VLM capability - capture or load a camera image, then analyze it with a vision model.
+        # The normalized result is ordinary JSON, so downstream on_value conditions can use it.
+        if method == "VLM":
+            try:
+                response_data = await vision.analyze_camera_image(url, node.args)
+                completed = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                _update_step_status(
+                    db, run_id, node.id, "success", now, completed,
+                    response_data=response_data, http_status_code=200
+                )
+                return {
+                    "node_results": {
+                        node.id: {"status": "success", "response_data": response_data, "error": None, "http_status_code": 200}
+                    },
+                    "failed_nodes": [],
+                    "skipped_nodes": [],
+                }
+            except Exception as e:
+                completed = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                error_msg = f"VLM analysis failed: {str(e)[:200]}"
+                _update_step_status(db, run_id, node.id, "failed", now, completed, error_msg=error_msg)
+
+                new_skipped = []
+                if node.on_failure == "halt_branch":
+                    new_skipped = list(_get_all_dependents(node.id, adj))
+                elif node.on_failure == "skip_dependents":
+                    new_skipped = adj.get(node.id, [])
+
                 return {
                     "node_results": {
                         node.id: {"status": "failed", "response_data": None, "error": error_msg, "http_status_code": None}

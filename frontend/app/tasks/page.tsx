@@ -4,7 +4,7 @@ import api, { Task, Policy } from '@/lib/api';
 import { Plus, ChevronDown, ChevronRight, Trash2, Loader2 } from 'lucide-react';
 import VoiceButton from '@/components/VoiceButton';
 
-function getPolicyActions(policy: Policy): Array<{ id: string; device: string; capability: string; args: Record<string, any> }> {
+function getPolicyActions(policy: Policy): Array<{ id: string; device: string; capability: string; args: Record<string, unknown> }> {
     const plan = policy.execution_plan;
     if (!plan) return [];
 
@@ -12,24 +12,30 @@ function getPolicyActions(policy: Policy): Array<{ id: string; device: string; c
     if (!Array.isArray(plan) && typeof plan === 'object' && 'nodes' in plan && Array.isArray(plan.nodes)) {
         return plan.nodes
             .filter((node) => node && typeof node === 'object')
-            .map((node) => ({
-                id: String(node.id ?? `${node.device}-${node.capability}`),
-                device: String(node.device ?? 'unknown-device'),
-                capability: String(node.capability ?? 'unknown-capability'),
-                args: node.args ?? {},
-            }));
+            .map((node) => {
+                const action = node as Record<string, unknown>;
+                return {
+                    id: String(action.id ?? `${action.device}-${action.capability}`),
+                    device: String(action.device ?? 'unknown-device'),
+                    capability: String(action.capability ?? 'unknown-capability'),
+                    args: typeof action.args === 'object' && action.args !== null ? action.args as Record<string, unknown> : {},
+                };
+            });
     }
 
     // Legacy flat action list
     if (Array.isArray(plan)) {
         return plan
             .filter((action) => action && typeof action === 'object')
-            .map((action, idx) => ({
-                id: String(action.id ?? `${action.device}-${action.capability}-${idx}`),
-                device: String(action.device ?? 'unknown-device'),
-                capability: String(action.capability ?? 'unknown-capability'),
-                args: action.args ?? {},
-            }));
+            .map((action, idx) => {
+                const legacyAction = action as Record<string, unknown>;
+                return {
+                    id: String(legacyAction.id ?? `${legacyAction.device}-${legacyAction.capability}-${idx}`),
+                    device: String(legacyAction.device ?? 'unknown-device'),
+                    capability: String(legacyAction.capability ?? 'unknown-capability'),
+                    args: typeof legacyAction.args === 'object' && legacyAction.args !== null ? legacyAction.args as Record<string, unknown> : {},
+                };
+            });
     }
 
     return [];

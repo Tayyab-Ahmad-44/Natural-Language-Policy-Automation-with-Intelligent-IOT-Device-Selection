@@ -8,9 +8,12 @@ import VoiceButton from '@/components/VoiceButton';
 const DAGView = dynamic(() => import('@/components/DAGView'), { ssr: false });
 
 // Helper to count nodes in a DAG or legacy flat plan
-function countActions(plan: any): number {
+function countActions(plan: unknown): number {
     if (!plan) return 0;
-    if (plan.nodes && Array.isArray(plan.nodes)) return plan.nodes.length;
+    if (typeof plan === 'object' && !Array.isArray(plan) && 'nodes' in plan) {
+        const maybeDag = plan as { nodes?: unknown };
+        if (Array.isArray(maybeDag.nodes)) return maybeDag.nodes.length;
+    }
     if (Array.isArray(plan)) return plan.length;
     return 0;
 }

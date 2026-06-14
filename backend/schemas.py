@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Literal
 
@@ -39,12 +41,14 @@ class Device(DeviceBase):
 
 class ExecutionCondition(BaseModel):
     """Condition that gates whether a DAG node should execute."""
-    type: Literal["on_success", "on_failure", "on_value"]
+    type: Literal["on_success", "on_failure", "on_value", "all", "any"]
     # Fields below only apply when type == "on_value"
     source_node_id: Optional[str] = None
     field: Optional[str] = None          # dot-path into the source node's response JSON
     operator: Optional[Literal[">", "<", "==", "!=", ">=", "<=", "contains"]] = None
     value: Optional[Any] = None
+    # Nested conditions only apply when type == "all" or "any"
+    conditions: Optional[List["ExecutionCondition"]] = None
 
 class ExecutionNode(BaseModel):
     """A single action node in the execution DAG."""

@@ -30,6 +30,10 @@ _response_overrides: dict = {}
 _failing_endpoints: set = set()
 # Simulated delay range (ms)
 _delay_range = (50, 300)
+# 1x1 PNG placeholder so camera/VLM flows can exercise image ingestion locally.
+_SAMPLE_CAMERA_IMAGE_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
 
 
 @app.post("/config/delay")
@@ -211,7 +215,12 @@ async def cam_pan(request: Request):
 @app.post("/home/cam/snap")
 async def cam_snap(request: Request):
     await _simulate_delay()
-    return _make_response("/home/cam/snap", await _safe_json(request), {"status": "snapshot_taken", "file": "/tmp/snap_001.jpg"})
+    return _make_response("/home/cam/snap", await _safe_json(request), {
+        "status": "snapshot_taken",
+        "file": "/tmp/snap_001.jpg",
+        "image_base64": _SAMPLE_CAMERA_IMAGE_BASE64,
+        "mime_type": "image/png",
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -322,7 +331,13 @@ async def siren_silence(request: Request):
 async def factory_cam_inspect(request: Request):
     body = await _safe_json(request)
     await _simulate_delay()
-    return _make_response("/factory/cam/inspect", body, {"status": "inspecting", "mode": body.get("mode", "standard"), "defects_found": 0})
+    return _make_response("/factory/cam/inspect", body, {
+        "status": "inspecting",
+        "mode": body.get("mode", "standard"),
+        "defects_found": 0,
+        "image_base64": _SAMPLE_CAMERA_IMAGE_BASE64,
+        "mime_type": "image/png",
+    })
 
 @app.post("/factory/cam/zoom")
 async def factory_cam_zoom(request: Request):
