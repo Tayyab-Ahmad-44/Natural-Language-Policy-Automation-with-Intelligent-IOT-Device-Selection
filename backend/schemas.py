@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List, Optional, Dict, Any, Literal
 
 
@@ -19,8 +19,7 @@ class Capability(CapabilityBase):
     id: int
     device_id: int
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class DeviceBase(BaseModel):
     name: str
@@ -33,8 +32,28 @@ class Device(DeviceBase):
     id: int
     capabilities: List[Capability] = []
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ─── Device Auto-Discovery ────────────────────────────────────────
+
+class DeviceDiscoverRequest(BaseModel):
+    """Ask the system to fetch a device catalog from an external endpoint and
+    map it into our schema via the LLM."""
+    endpoint: str
+    headers: Optional[Dict[str, str]] = None
+
+class DeviceDiscoverResponse(BaseModel):
+    devices: List[DeviceCreate] = []
+    raw_sample: Optional[str] = None   # truncated raw response, for transparency
+    warning: Optional[str] = None
+
+class DeviceBulkCreate(BaseModel):
+    devices: List[DeviceCreate] = []
+
+class DeviceBulkCreateResponse(BaseModel):
+    created: List[Device] = []
+    skipped: List[str] = []   # names skipped because they already exist
 
 
 # ─── DAG Schema (new) ─────────────────────────────────────────────
@@ -84,8 +103,7 @@ class Policy(PolicyBase):
     execution_plan: Any = None   # stores ExecutionDAG dict or legacy flat list
     task_id: Optional[int] = None
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ─── Task ──────────────────────────────────────────────────────────
@@ -102,8 +120,7 @@ class Task(TaskBase):
     created_at: str
     policies: List[Policy] = []
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ─── LLM Response ─────────────────────────────────────────────────
@@ -142,8 +159,7 @@ class ExecutionStepResponse(BaseModel):
     error_message: Optional[str] = None
     http_status_code: Optional[int] = None
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ExecutionRunResponse(BaseModel):
     id: int
@@ -155,8 +171,7 @@ class ExecutionRunResponse(BaseModel):
     completed_at: Optional[str] = None
     summary: Optional[Dict[str, Any]] = None
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ExecutionRunDetail(ExecutionRunResponse):
     steps: List[ExecutionStepResponse] = []

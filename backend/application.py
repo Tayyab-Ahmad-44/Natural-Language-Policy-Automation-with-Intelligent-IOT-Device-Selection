@@ -433,6 +433,76 @@ def delete_device(device_id: int, db: Session = Depends(get_db)):
     return {"detail": "Device deleted"}
 
 
+@application.post("/api/devices/discover", response_model=schemas.DeviceDiscoverResponse)
+async def discover_devices(req: schemas.DeviceDiscoverRequest):
+    """Fetch a device catalog from an external endpoint via GET and use the LLM
+    to map the (arbitrary) response into our Device/Capability schema.
+
+    This only returns a PREVIEW — nothing is persisted until the client confirms
+    via POST /api/devices/bulk.
+    """
+    endpoint = (req.endpoint or "").strip()
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="An endpoint URL is required.")
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            resp = await client.get(endpoint, headers=req.headers or {})
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Could not reach endpoint: {e}")
+
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Endpoint returned HTTP {resp.status_code}: {resp.text[:300]}",
+        )
+
+    raw_text = resp.text
+    devices = llm.map_devices_from_response(raw_text, endpoint)
+
+    warning = None
+    if not devices:
+        warning = "The LLM could not derive any devices from this endpoint's response."
+
+    return schemas.DeviceDiscoverResponse(
+        devices=devices,
+        raw_sample=raw_text[:2000],
+        warning=warning,
+    )
+
+
+@application.post("/api/devices/bulk", response_model=schemas.DeviceBulkCreateResponse)
+def bulk_create_devices(payload: schemas.DeviceBulkCreate, db: Session = Depends(get_db)):
+    """Create many devices at once (used by auto-discovery import).
+    Devices whose name already exists are skipped rather than erroring."""
+    created = []
+    skipped = []
+    for device in payload.devices:
+        existing = db.query(models.Device).filter(models.Device.name == device.name).first()
+        if existing:
+            skipped.append(device.name)
+            continue
+
+        db_device = models.Device(name=device.name, type=device.type)
+        db.add(db_device)
+        db.commit()
+        db.refresh(db_device)
+
+        for cap in device.capabilities:
+            db.add(models.Capability(
+                name=cap.name,
+                url=cap.url,
+                method=cap.method,
+                input_schema=cap.input_schema,
+                device_id=db_device.id,
+            ))
+        db.commit()
+        db.refresh(db_device)
+        created.append(db_device)
+
+    return {"created": created, "skipped": skipped}
+
+
 # ═══════════════════════════════════════════════════════════════════
 # POLICY ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════

@@ -1,13 +1,26 @@
 "use client";
 import { useState, useEffect } from 'react';
-import api, { Device, Capability } from '@/lib/api';
-import { Plus, Server, Trash2 } from 'lucide-react';
+import api, { Device, Capability, DeviceDraft, discoverDevices, bulkCreateDevices } from '@/lib/api';
+import { Plus, Server, Trash2, Pencil, Radar, Loader2 } from 'lucide-react';
 
 export default function DevicesPage() {
     const [devices, setDevices] = useState<Device[]>([]);
     const [newDeviceName, setNewDeviceName] = useState('');
     const [newDeviceType, setNewDeviceType] = useState('camera');
     const [loading, setLoading] = useState(true);
+
+    // Registration mode: type it in by hand, or auto-discover from an endpoint
+    const [mode, setMode] = useState<'manual' | 'discover'>('manual');
+
+    // Auto-discovery state
+    const [discoverEndpoint, setDiscoverEndpoint] = useState('');
+    const [discoverHeaders, setDiscoverHeaders] = useState('');
+    const [discovering, setDiscovering] = useState(false);
+    const [discoverError, setDiscoverError] = useState<string | null>(null);
+    const [discoverWarning, setDiscoverWarning] = useState<string | null>(null);
+    const [discoveredDevices, setDiscoveredDevices] = useState<DeviceDraft[]>([]);
+    const [rawSample, setRawSample] = useState<string | null>(null);
+    const [importing, setImporting] = useState(false);
 
     // Capabilities state
     const [capabilities, setCapabilities] = useState<Capability[]>([]);
@@ -78,6 +91,66 @@ export default function DevicesPage() {
         } catch (error) {
             console.error("Failed to add device", error);
             alert("Failed to add device. Name might be duplicate.");
+        }
+    };
+
+    const handleDiscover = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setDiscoverError(null);
+        setDiscoverWarning(null);
+        setDiscoveredDevices([]);
+        setRawSample(null);
+
+        // Optional headers are entered as JSON; ignore if blank, reject if malformed.
+        let headers: Record<string, string> | undefined;
+        if (discoverHeaders.trim()) {
+            try {
+                headers = JSON.parse(discoverHeaders);
+            } catch {
+                setDiscoverError('Headers must be valid JSON, e.g. {"Authorization": "Bearer ..."}');
+                return;
+            }
+        }
+
+        setDiscovering(true);
+        try {
+            const res = await discoverDevices(discoverEndpoint.trim(), headers);
+            setDiscoveredDevices(res.devices);
+            setRawSample(res.raw_sample ?? null);
+            setDiscoverWarning(res.warning ?? null);
+        } catch (error: unknown) {
+            const detail =
+                (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+            setDiscoverError(detail || 'Failed to fetch or analyze the endpoint.');
+        } finally {
+            setDiscovering(false);
+        }
+    };
+
+    const removeDiscoveredDevice = (index: number) => {
+        setDiscoveredDevices(discoveredDevices.filter((_, i) => i !== index));
+    };
+
+    const handleImportDiscovered = async () => {
+        if (discoveredDevices.length === 0) return;
+        setImporting(true);
+        try {
+            const res = await bulkCreateDevices(discoveredDevices);
+            let message = `Imported ${res.created.length} device(s).`;
+            if (res.skipped.length > 0) {
+                message += ` Skipped ${res.skipped.length} already-existing: ${res.skipped.join(', ')}.`;
+            }
+            alert(message);
+            setDiscoveredDevices([]);
+            setRawSample(null);
+            setDiscoverEndpoint('');
+            setDiscoverHeaders('');
+            fetchDevices();
+        } catch (error) {
+            console.error('Failed to import devices', error);
+            alert('Failed to import devices.');
+        } finally {
+            setImporting(false);
         }
     };
 
@@ -182,6 +255,30 @@ export default function DevicesPage() {
 
             <div className="bg-white shadow sm:rounded-lg p-6">
                 <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">Register New Device</h3>
+
+                {/* Mode selector: register by hand, or auto-discover from an endpoint */}
+                <div className="flex gap-2 mb-6 border-b border-gray-200">
+                    <button
+                        type="button"
+                        onClick={() => setMode('manual')}
+                        className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px ${mode === 'manual'
+                            ? 'border-indigo-600 text-indigo-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                    >
+                        <Pencil className="w-4 h-4" /> Manual
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setMode('discover')}
+                        className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px ${mode === 'discover'
+                            ? 'border-indigo-600 text-indigo-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                    >
+                        <Radar className="w-4 h-4" /> Auto-Discover from Endpoint
+                    </button>
+                </div>
+
+                {mode === 'manual' && (
                 <form onSubmit={handleAddDevice} className="space-y-4">
                     <div className="flex gap-4">
                         <div className="flex-1">
@@ -303,6 +400,123 @@ export default function DevicesPage() {
                         </button>
                     </div>
                 </form>
+                )}
+
+                {mode === 'discover' && (
+                <div className="space-y-4">
+                    <p className="text-sm text-gray-500">
+                        Provide an endpoint that returns your device catalog. We&apos;ll send a GET request,
+                        let the LLM analyze whatever structure comes back, and map it into this system&apos;s
+                        format. You can review everything before it&apos;s saved.
+                    </p>
+                    <form onSubmit={handleDiscover} className="space-y-4">
+                        <div>
+                            <label htmlFor="endpoint" className="block text-sm font-medium text-gray-700">Catalog Endpoint URL</label>
+                            <input
+                                type="url"
+                                id="endpoint"
+                                required
+                                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-black"
+                                value={discoverEndpoint}
+                                onChange={(e) => setDiscoverEndpoint(e.target.value)}
+                                placeholder="https://my-gateway.local/api/devices"
+                            />
+                        </div>
+                        <div>
+                            <label htmlFor="headers" className="block text-sm font-medium text-gray-700">
+                                Headers (optional, JSON)
+                            </label>
+                            <input
+                                type="text"
+                                id="headers"
+                                className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-black font-mono"
+                                value={discoverHeaders}
+                                onChange={(e) => setDiscoverHeaders(e.target.value)}
+                                placeholder='{"Authorization": "Bearer ..."}'
+                            />
+                        </div>
+                        <button
+                            type="submit"
+                            disabled={discovering}
+                            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-60"
+                        >
+                            {discovering
+                                ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Fetching & Analyzing…</>
+                                : <><Radar className="w-4 h-4 mr-2" /> Fetch &amp; Analyze</>}
+                        </button>
+                    </form>
+
+                    {discoverError && (
+                        <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+                            {discoverError}
+                        </div>
+                    )}
+                    {discoverWarning && (
+                        <div className="rounded-md bg-yellow-50 border border-yellow-200 p-3 text-sm text-yellow-800">
+                            {discoverWarning}
+                        </div>
+                    )}
+
+                    {discoveredDevices.length > 0 && (
+                        <div className="border-t pt-4 space-y-3">
+                            <div className="flex items-center justify-between">
+                                <h4 className="text-md font-medium text-gray-900">
+                                    Preview — {discoveredDevices.length} device(s) detected
+                                </h4>
+                                <button
+                                    type="button"
+                                    onClick={handleImportDiscovered}
+                                    disabled={importing}
+                                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-60"
+                                >
+                                    {importing
+                                        ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Importing…</>
+                                        : <><Plus className="w-4 h-4 mr-2" /> Import {discoveredDevices.length} Device(s)</>}
+                                </button>
+                            </div>
+                            <div className="space-y-2">
+                                {discoveredDevices.map((d, idx) => (
+                                    <div key={idx} className="bg-gray-50 border border-gray-200 rounded-md p-3">
+                                        <div className="flex items-start justify-between">
+                                            <div>
+                                                <p className="font-medium text-gray-900">{d.name}</p>
+                                                <p className="text-xs text-gray-500">{d.type}</p>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => removeDiscoveredDevice(idx)}
+                                                className="text-red-500 hover:text-red-700"
+                                                title="Exclude from import"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                        <ul className="mt-2 space-y-1">
+                                            {d.capabilities.map((c, ci) => (
+                                                <li key={ci} className="text-xs text-gray-600 flex items-center gap-2 flex-wrap">
+                                                    <span className="font-medium text-gray-700">{c.name}</span>
+                                                    <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">{c.method}</span>
+                                                    <span className="text-gray-400 truncate">{c.url}</span>
+                                                </li>
+                                            ))}
+                                            {d.capabilities.length === 0 && (
+                                                <li className="text-xs text-gray-400">No capabilities detected.</li>
+                                            )}
+                                        </ul>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {rawSample && (
+                        <details className="text-xs text-gray-500">
+                            <summary className="cursor-pointer select-none">View raw endpoint response</summary>
+                            <pre className="mt-2 bg-gray-900 text-gray-100 p-3 rounded-md overflow-x-auto max-h-60">{rawSample}</pre>
+                        </details>
+                    )}
+                </div>
+                )}
             </div>
 
             <div className="bg-white shadow overflow-hidden sm:rounded-md">

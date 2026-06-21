@@ -21,6 +21,24 @@ export interface Device {
     capabilities: Capability[];
 }
 
+// A device shaped for creation (no id yet) — used by auto-discovery preview/import.
+export interface DeviceDraft {
+    name: string;
+    type: string;
+    capabilities: Capability[];
+}
+
+export interface DeviceDiscoverResponse {
+    devices: DeviceDraft[];
+    raw_sample?: string | null;
+    warning?: string | null;
+}
+
+export interface DeviceBulkCreateResponse {
+    created: Device[];
+    skipped: string[];
+}
+
 // ─── DAG Types ────────────────────────────────────────────────────
 
 export interface ExecutionCondition {
@@ -134,6 +152,19 @@ export interface SensorReadingResponse {
 }
 
 // ─── API Functions ───────────────────────────────────────────────
+
+export async function discoverDevices(
+    endpoint: string,
+    headers?: Record<string, string>
+): Promise<DeviceDiscoverResponse> {
+    const resp = await api.post('/devices/discover', { endpoint, headers });
+    return resp.data;
+}
+
+export async function bulkCreateDevices(devices: DeviceDraft[]): Promise<DeviceBulkCreateResponse> {
+    const resp = await api.post('/devices/bulk', { devices });
+    return resp.data;
+}
 
 export async function previewPolicy(name: string, original_text: string): Promise<PolicyPreviewResponse> {
     const resp = await api.post('/policies/preview', { name, original_text });

@@ -5,6 +5,7 @@ Run: uvicorn mock_devices:app --port 8001
 All endpoints from comprehensive_scenarios.md are simulated here.
 """
 
+import copy
 import random
 import asyncio
 import json
@@ -582,6 +583,215 @@ async def hospital_vitals_stream():
             yield f"data: {json.dumps(event)}\n\n"
             await asyncio.sleep(2)
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DEVICE CATALOGS (for registry auto-discovery)
+# ═══════════════════════════════════════════════════════════════════
+#
+# Each domain exposes a GET endpoint that returns its device catalog in a
+# deliberately "vendor-specific" shape (label / category / actions with
+# verb+endpoint+params). The registry's LLM mapper consumes this raw shape and
+# maps it into the system's internal Device/Capability schema.
+#
+# Endpoint paths in the catalog are stored relative; absolute URLs (pointing
+# back at this mock server) are filled in per-request from request.base_url.
+
+_CATALOGS = {
+    "home": {
+        "site": "Smart Home",
+        "gateway": "home-hub-v2",
+        "devices": [
+            {"device_id": "curtains-bedroom", "label": "Bedroom Curtains", "category": "window_covering", "actions": [
+                {"action": "open", "verb": "POST", "endpoint": "/home/bed/curtains/open", "params": {}},
+                {"action": "close", "verb": "POST", "endpoint": "/home/bed/curtains/close", "params": {}},
+                {"action": "set_position", "verb": "POST", "endpoint": "/home/bed/curtains/set", "params": {"percentage": "number"}},
+            ]},
+            {"device_id": "coffee-kitchen", "label": "Coffee Machine", "category": "appliance", "actions": [
+                {"action": "brew", "verb": "POST", "endpoint": "/home/kitchen/coffee/brew", "params": {"type": "string", "cups": "number"}},
+                {"action": "power_on", "verb": "POST", "endpoint": "/home/kitchen/coffee/on", "params": {}},
+                {"action": "power_off", "verb": "POST", "endpoint": "/home/kitchen/coffee/off", "params": {}},
+            ]},
+            {"device_id": "thermostat-main", "label": "Thermostat", "category": "hvac", "actions": [
+                {"action": "set_temperature", "verb": "POST", "endpoint": "/home/hvac/set", "params": {"temp": "number"}},
+                {"action": "set_mode", "verb": "POST", "endpoint": "/home/hvac/mode", "params": {"mode": "string"}},
+                {"action": "set_fan", "verb": "POST", "endpoint": "/home/hvac/fan", "params": {"state": "string"}},
+            ]},
+            {"device_id": "speaker-living", "label": "Living Room Speaker", "category": "speaker", "actions": [
+                {"action": "play", "verb": "POST", "endpoint": "/home/living/speaker/play", "params": {"playlist": "string"}},
+                {"action": "set_volume", "verb": "POST", "endpoint": "/home/living/speaker/volume", "params": {"level": "number"}},
+                {"action": "stop", "verb": "POST", "endpoint": "/home/living/speaker/stop", "params": {}},
+            ]},
+            {"device_id": "light-living", "label": "Living Room Light", "category": "light", "actions": [
+                {"action": "turn_on", "verb": "POST", "endpoint": "/home/living/light/on", "params": {}},
+                {"action": "turn_off", "verb": "POST", "endpoint": "/home/living/light/off", "params": {}},
+                {"action": "dim", "verb": "POST", "endpoint": "/home/living/light/dim", "params": {"percentage": "number"}},
+                {"action": "set_color", "verb": "POST", "endpoint": "/home/living/light/color", "params": {"hex": "string"}},
+            ]},
+            {"device_id": "lock-front", "label": "Front Door Lock", "category": "lock", "actions": [
+                {"action": "lock", "verb": "POST", "endpoint": "/home/front/lock", "params": {}},
+                {"action": "unlock", "verb": "POST", "endpoint": "/home/front/unlock", "params": {"code": "string"}},
+                {"action": "get_status", "verb": "GET", "endpoint": "/home/front/status", "params": {}},
+            ]},
+            {"device_id": "garage-door", "label": "Garage Door", "category": "door", "actions": [
+                {"action": "open", "verb": "POST", "endpoint": "/home/garage/open", "params": {}},
+                {"action": "close", "verb": "POST", "endpoint": "/home/garage/close", "params": {}},
+            ]},
+            {"device_id": "camera-front", "label": "Security Camera", "category": "camera", "actions": [
+                {"action": "record", "verb": "POST", "endpoint": "/home/cam/record", "params": {"duration": "number"}},
+                {"action": "pan", "verb": "POST", "endpoint": "/home/cam/pan", "params": {"angle": "number"}},
+                {"action": "snapshot", "verb": "POST", "endpoint": "/home/cam/snap", "params": {}},
+            ]},
+            {"device_id": "motion-sensor", "label": "Motion Sensor", "category": "sensor", "actions": [
+                {"action": "motion_stream", "verb": "GET", "protocol": "SSE", "endpoint": "/home/motion/stream", "params": {}},
+            ]},
+        ],
+    },
+    "factory": {
+        "site": "Industrial Manufacturing",
+        "gateway": "plc-bridge-01",
+        "devices": [
+            {"device_id": "press-01", "label": "Hydraulic Press", "category": "press", "actions": [
+                {"action": "start", "verb": "POST", "endpoint": "/factory/press/start", "params": {"pressure": "number"}},
+                {"action": "stop", "verb": "POST", "endpoint": "/factory/press/stop", "params": {}},
+                {"action": "emergency_stop", "verb": "POST", "endpoint": "/factory/press/estop", "params": {}},
+            ]},
+            {"device_id": "fan-exhaust", "label": "Exhaust Fan", "category": "fan", "actions": [
+                {"action": "set_speed", "verb": "POST", "endpoint": "/factory/fan/set", "params": {"rpm": "number"}},
+                {"action": "oscillate", "verb": "POST", "endpoint": "/factory/fan/oscillate", "params": {"enabled": "boolean"}},
+            ]},
+            {"device_id": "temp-sensor-floor", "label": "Floor Temperature Sensor", "category": "sensor", "actions": [
+                {"action": "read", "verb": "GET", "endpoint": "/factory/sensor/temp", "params": {}},
+                {"action": "calibrate", "verb": "POST", "endpoint": "/factory/sensor/calibrate", "params": {}},
+                {"action": "temp_stream", "verb": "GET", "protocol": "SSE", "endpoint": "/factory/sensor/temp/stream", "params": {}},
+            ]},
+            {"device_id": "warning-light", "label": "Warning Light", "category": "light", "actions": [
+                {"action": "flash", "verb": "POST", "endpoint": "/factory/light/flash", "params": {"color": "string", "duration": "number"}},
+                {"action": "solid", "verb": "POST", "endpoint": "/factory/light/solid", "params": {"color": "string"}},
+                {"action": "off", "verb": "POST", "endpoint": "/factory/light/off", "params": {}},
+            ]},
+            {"device_id": "conveyor-01", "label": "Conveyor Belt", "category": "conveyor", "actions": [
+                {"action": "start", "verb": "POST", "endpoint": "/factory/conveyor/start", "params": {"speed": "number"}},
+                {"action": "stop", "verb": "POST", "endpoint": "/factory/conveyor/stop", "params": {}},
+                {"action": "reverse", "verb": "POST", "endpoint": "/factory/conveyor/reverse", "params": {}},
+            ]},
+            {"device_id": "arm-01", "label": "Robotic Arm", "category": "robot_arm", "actions": [
+                {"action": "move", "verb": "POST", "endpoint": "/factory/arm/move", "params": {"x": "number", "y": "number", "z": "number"}},
+                {"action": "grip", "verb": "POST", "endpoint": "/factory/arm/grip", "params": {"force": "number"}},
+                {"action": "release", "verb": "POST", "endpoint": "/factory/arm/release", "params": {}},
+            ]},
+            {"device_id": "siren-01", "label": "Factory Siren", "category": "alarm", "actions": [
+                {"action": "alert", "verb": "POST", "endpoint": "/factory/siren/alert", "params": {"level": "string"}},
+                {"action": "silence", "verb": "POST", "endpoint": "/factory/siren/silence", "params": {}},
+            ]},
+            {"device_id": "cam-inspect", "label": "Inspection Camera", "category": "camera", "actions": [
+                {"action": "inspect", "verb": "POST", "endpoint": "/factory/cam/inspect", "params": {"mode": "string"}},
+                {"action": "zoom", "verb": "POST", "endpoint": "/factory/cam/zoom", "params": {"level": "number"}},
+            ]},
+        ],
+    },
+    "hospital": {
+        "site": "Smart Hospital",
+        "gateway": "ward-controller-3",
+        "devices": [
+            {"device_id": "bed-201", "label": "Hospital Bed", "category": "bed", "actions": [
+                {"action": "adjust_head", "verb": "POST", "endpoint": "/hospital/bed/head", "params": {"angle": "number"}},
+                {"action": "adjust_feet", "verb": "POST", "endpoint": "/hospital/bed/feet", "params": {"angle": "number"}},
+                {"action": "adjust_height", "verb": "POST", "endpoint": "/hospital/bed/height", "params": {"cm": "number"}},
+            ]},
+            {"device_id": "iv-pump-201", "label": "IV Pump", "category": "pump", "actions": [
+                {"action": "set_rate", "verb": "POST", "endpoint": "/hospital/iv/set", "params": {"ml_per_hour": "number"}},
+                {"action": "stop", "verb": "POST", "endpoint": "/hospital/iv/stop", "params": {}},
+                {"action": "reset_alarm", "verb": "POST", "endpoint": "/hospital/iv/reset", "params": {}},
+            ]},
+            {"device_id": "lights-201", "label": "Room Lights", "category": "light", "actions": [
+                {"action": "on", "verb": "POST", "endpoint": "/hospital/lights/on", "params": {}},
+                {"action": "off", "verb": "POST", "endpoint": "/hospital/lights/off", "params": {}},
+                {"action": "dim", "verb": "POST", "endpoint": "/hospital/lights/dim", "params": {"percentage": "number"}},
+            ]},
+            {"device_id": "nurse-call-201", "label": "Nurse Call", "category": "alarm", "actions": [
+                {"action": "alert", "verb": "POST", "endpoint": "/hospital/call/alert", "params": {"priority": "string"}},
+                {"action": "cancel", "verb": "POST", "endpoint": "/hospital/call/cancel", "params": {}},
+            ]},
+            {"device_id": "monitor-201", "label": "Patient Monitor", "category": "monitor", "actions": [
+                {"action": "measure_bp", "verb": "POST", "endpoint": "/hospital/monitor/bp", "params": {}},
+                {"action": "measure_hr", "verb": "POST", "endpoint": "/hospital/monitor/hr", "params": {}},
+                {"action": "measure_o2", "verb": "POST", "endpoint": "/hospital/monitor/o2", "params": {}},
+                {"action": "vitals_stream", "verb": "GET", "protocol": "SSE", "endpoint": "/hospital/monitor/vitals/stream", "params": {}},
+            ]},
+            {"device_id": "hvac-201", "label": "Room HVAC", "category": "hvac", "actions": [
+                {"action": "set_temperature", "verb": "POST", "endpoint": "/hospital/hvac/set", "params": {"temp": "number"}},
+                {"action": "set_filter", "verb": "POST", "endpoint": "/hospital/hvac/filter", "params": {"mode": "string"}},
+            ]},
+            {"device_id": "door-201", "label": "Room Door", "category": "door", "actions": [
+                {"action": "lock", "verb": "POST", "endpoint": "/hospital/door/lock", "params": {}},
+                {"action": "unlock", "verb": "POST", "endpoint": "/hospital/door/unlock", "params": {"badge": "string"}},
+                {"action": "emergency_open", "verb": "POST", "endpoint": "/hospital/door/open", "params": {}},
+            ]},
+            {"device_id": "sanitizer-hall", "label": "Sanitizer Dispenser", "category": "dispenser", "actions": [
+                {"action": "dispense", "verb": "POST", "endpoint": "/hospital/sanitizer/dispense", "params": {"amount": "number"}},
+                {"action": "get_level", "verb": "GET", "endpoint": "/hospital/sanitizer/level", "params": {}},
+            ]},
+        ],
+    },
+    "farm": {
+        "site": "Smart Agriculture",
+        "gateway": "field-gateway-A",
+        "devices": [
+            {"device_id": "sprinkler-zone1", "label": "Sprinkler", "category": "sprinkler", "actions": [
+                {"action": "open", "verb": "POST", "endpoint": "/farm/sprinkler/open", "params": {"duration": "number"}},
+                {"action": "close", "verb": "POST", "endpoint": "/farm/sprinkler/close", "params": {}},
+            ]},
+            {"device_id": "soil-sensor-zone1", "label": "Soil Sensor", "category": "sensor", "actions": [
+                {"action": "read_moisture", "verb": "GET", "endpoint": "/farm/sensor/moisture", "params": {}},
+                {"action": "read_ph", "verb": "GET", "endpoint": "/farm/sensor/ph", "params": {}},
+                {"action": "read_temperature", "verb": "GET", "endpoint": "/farm/sensor/temp", "params": {}},
+                {"action": "moisture_stream", "verb": "GET", "protocol": "SSE", "endpoint": "/farm/sensor/moisture/stream", "params": {}},
+            ]},
+            {"device_id": "roof-greenhouse", "label": "Greenhouse Roof", "category": "roof", "actions": [
+                {"action": "open", "verb": "POST", "endpoint": "/farm/roof/open", "params": {"percentage": "number"}},
+                {"action": "close", "verb": "POST", "endpoint": "/farm/roof/close", "params": {}},
+            ]},
+        ],
+    },
+}
+
+
+def _catalog_with_absolute_urls(domain: str, request: Request) -> dict:
+    """Return a domain catalog with each action endpoint expanded to a full URL
+    pointing back at this server (derived from the incoming request)."""
+    base = str(request.base_url).rstrip("/")
+    catalog = copy.deepcopy(_CATALOGS[domain])
+    for device in catalog["devices"]:
+        for action in device["actions"]:
+            action["endpoint"] = f"{base}{action['endpoint']}"
+    return catalog
+
+
+@app.get("/home/catalog")
+async def home_catalog(request: Request):
+    return _catalog_with_absolute_urls("home", request)
+
+
+@app.get("/factory/catalog")
+async def factory_catalog(request: Request):
+    return _catalog_with_absolute_urls("factory", request)
+
+
+@app.get("/hospital/catalog")
+async def hospital_catalog(request: Request):
+    return _catalog_with_absolute_urls("hospital", request)
+
+
+@app.get("/farm/catalog")
+async def farm_catalog(request: Request):
+    return _catalog_with_absolute_urls("farm", request)
+
+
+@app.get("/catalog")
+async def full_catalog(request: Request):
+    """All domains in one response."""
+    return {"catalogs": [_catalog_with_absolute_urls(d, request) for d in _CATALOGS]}
 
 
 # ═══════════════════════════════════════════════════════════════════

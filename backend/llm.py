@@ -236,3 +236,87 @@ ONLY return the JSON string, no markdown formatting, no explanation.
     except Exception as e:
         print(f"LLM Task Breakdown Error: {e}")
         return []
+
+
+# ──────────────────────────────────────────────────────────────────
+# Device auto-discovery: map an arbitrary catalog response → our schema
+# ──────────────────────────────────────────────────────────────────
+
+DEVICE_TARGET_SCHEMA = """
+Our system stores devices in this EXACT JSON shape:
+{
+  "devices": [
+    {
+      "name": "Living Room Camera",          // unique, human-readable name
+      "type": "camera",                        // infer best fit: camera, light, lock, sensor, thermostat, speaker, appliance, alarm, hvac, pump, motor, door, ...
+      "capabilities": [
+        {
+          "name": "Snapshot",                  // short action/command name
+          "url": "http://host:port/path",      // FULL absolute URL that triggers this capability
+          "method": "GET",                     // one of: GET, POST, PUT, SSE, VLM
+          "input_schema": {"duration": "int"}  // dict of body arguments the action accepts ({} if none)
+        }
+      ]
+    }
+  ]
+}
+"""
+
+
+def map_devices_from_response(raw_response: str, source_endpoint: str = "") -> list:
+    """
+    Uses the LLM to map an arbitrary external device-catalog JSON response into
+    our internal Device/Capability schema. Returns a list of schemas.DeviceCreate.
+    """
+    # Guard the token budget against very large payloads.
+    snippet = raw_response[:12000]
+
+    prompt = f"""You are an IoT device-registry integration assistant.
+A user pointed our system at an external device-catalog endpoint and we fetched its raw response.
+Map that arbitrary response into OUR internal schema so the devices can be stored.
+
+{DEVICE_TARGET_SCHEMA}
+
+MAPPING RULES:
+1. Identify every distinct physical device described in the response.
+2. Give each device a clear, unique "name" and infer a sensible "type".
+3. Map each controllable action / endpoint / command of a device into one capability entry.
+4. "url" MUST be a full absolute URL. If the response only contains relative paths, join them with the origin of the source endpoint: {source_endpoint or "(unknown — keep paths as given)"}
+5. Choose "method" from GET, POST, PUT, SSE, VLM. Use SSE for streaming sensor feeds, VLM for camera scene-analysis capabilities, GET for reads/status, POST for actions/commands.
+6. "input_schema" is a dict describing the JSON body arguments the action accepts ({{}} if none). Infer it from any parameter/argument lists present.
+7. If the structure is ambiguous, make a reasonable best-effort mapping rather than returning nothing.
+
+Raw response from {source_endpoint or "the endpoint"}:
+{snippet}
+
+Return ONLY a JSON object of the form {{"devices": [...]}}. No markdown, no explanation.
+"""
+
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=4096,
+        )
+        text = response.choices[0].message.content.strip()
+
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+
+        data = json.loads(text.strip())
+        devices = []
+        for d in data.get("devices", []):
+            try:
+                devices.append(schemas.DeviceCreate(**d))
+            except Exception as ex:
+                print(f"Skipping malformed device from discovery: {ex}")
+        return devices
+
+    except Exception as e:
+        print(f"LLM Device Mapping Error: {e}")
+        return []
