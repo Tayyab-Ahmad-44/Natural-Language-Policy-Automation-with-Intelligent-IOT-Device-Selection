@@ -1,9 +1,10 @@
 "use client";
 import { useState, useEffect } from 'react';
 import api, { Policy, PolicyPreviewResponse, ExecutionRunDetail, ExecutionStep, getExecutionDetail } from '@/lib/api';
-import { Plus, Check, AlertCircle, Play, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { Plus, Check, AlertCircle, AlertTriangle, Play, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import VoiceButton from '@/components/VoiceButton';
+import ConflictCard from '@/components/ConflictCard';
 
 const DAGView = dynamic(() => import('@/components/DAGView'), { ssr: false });
 
@@ -58,7 +59,7 @@ export default function PoliciesPage() {
         }
     };
 
-    const handleCreate = async () => {
+    const handleCreate = async (replacePolicyIds: number[] = []) => {
         if (!policyName || !policyInput) return;
         setLoading(true);
         try {
@@ -67,6 +68,7 @@ export default function PoliciesPage() {
                 name: policyName,
                 original_text: policyInput,
                 repeat_interval_seconds: intervalVal,
+                replace_policy_ids: replacePolicyIds,
             });
             setPolicyName('');
             setPolicyInput('');
@@ -79,6 +81,12 @@ export default function PoliciesPage() {
             setLoading(false);
         }
     };
+
+    // IDs of saved existing policies the user can choose to replace.
+    const conflictReplaceableIds = (preview?.conflicts ?? [])
+        .map(c => c.policy_id)
+        .filter((id): id is number => id !== null);
+    const hasConflicts = (preview?.conflicts?.length ?? 0) > 0;
 
     const handleExecute = async (policyId: number) => {
         setExecuting(policyId);
@@ -197,9 +205,9 @@ export default function PoliciesPage() {
                             >
                                 {loading ? 'Processing...' : 'Preview Interpretation'}
                             </button>
-                            {preview && (
+                            {preview && !hasConflicts && (
                                 <button
-                                    onClick={handleCreate}
+                                    onClick={() => handleCreate()}
                                     disabled={loading || !policyName}
                                     className="flex-1 inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none cursor-pointer"
                                 >
@@ -208,6 +216,42 @@ export default function PoliciesPage() {
                                 </button>
                             )}
                         </div>
+
+                        {/* Conflict resolution actions */}
+                        {preview && hasConflicts && (
+                            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 space-y-3">
+                                <p className="text-sm font-medium text-amber-800 flex items-center gap-2">
+                                    <AlertTriangle className="w-4 h-4" />
+                                    This policy conflicts with {preview!.conflicts.length} existing
+                                    {preview!.conflicts.length === 1 ? ' policy' : ' policies'}. Choose how to proceed:
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        onClick={() => handleCreate()}
+                                        disabled={loading || !policyName}
+                                        className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+                                    >
+                                        Keep both — save anyway
+                                    </button>
+                                    {conflictReplaceableIds.length > 0 && (
+                                        <button
+                                            onClick={() => handleCreate(conflictReplaceableIds)}
+                                            disabled={loading || !policyName}
+                                            className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 disabled:opacity-50"
+                                        >
+                                            Replace conflicting & save
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => setPreview(null)}
+                                        disabled={loading}
+                                        className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-gray-700 bg-white border border-gray-300 hover:bg-gray-50"
+                                    >
+                                        Cancel — keep existing
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -227,6 +271,15 @@ export default function PoliciesPage() {
                                     <><AlertCircle className="w-4 h-4" /> {preview.validation.errors.join(", ")}</>
                                 )}
                             </div>
+
+                            {/* Conflicts */}
+                            {preview.conflicts.length > 0 && (
+                                <div className="space-y-2">
+                                    {preview.conflicts.map((c, i) => (
+                                        <ConflictCard key={i} conflict={c} />
+                                    ))}
+                                </div>
+                            )}
 
                             {/* Time window */}
                             <div className="text-sm text-gray-600">

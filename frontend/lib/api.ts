@@ -69,11 +69,25 @@ export interface DAGValidation {
     errors: string[];
 }
 
+export interface PolicyConflict {
+    policy_id: number | null;
+    policy_name: string;
+    existing_text: string;
+    existing_window: { from_time?: string; to_time?: string };
+    shared_devices: string[];
+    type: 'contradiction' | 'redundancy' | 'overlap';
+    severity: 'high' | 'medium' | 'low';
+    explanation: string;
+    suggestion: string;
+    new_policy_name?: string | null;
+}
+
 export interface PolicyPreviewResponse {
     execution_dag: ExecutionDAG;
     time_window: { from_time: string; to_time: string };
     validation: DAGValidation;
     levels: string[][];
+    conflicts: PolicyConflict[];
 }
 
 // ─── Policy ───────────────────────────────────────────────────────

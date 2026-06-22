@@ -1,8 +1,9 @@
 "use client";
 import { useState, useEffect } from 'react';
-import api, { Task, Policy } from '@/lib/api';
-import { Plus, ChevronDown, ChevronRight, Trash2, Loader2 } from 'lucide-react';
+import api, { Task, Policy, PolicyConflict } from '@/lib/api';
+import { Plus, ChevronDown, ChevronRight, Trash2, Loader2, AlertTriangle, X } from 'lucide-react';
 import VoiceButton from '@/components/VoiceButton';
+import ConflictCard from '@/components/ConflictCard';
 
 function getPolicyActions(policy: Policy): Array<{ id: string; device: string; capability: string; args: Record<string, unknown> }> {
     const plan = policy.execution_plan;
@@ -47,6 +48,7 @@ export default function TasksPage() {
     const [newTaskDesc, setNewTaskDesc] = useState('');
     const [loading, setLoading] = useState(false);
     const [expandedTasks, setExpandedTasks] = useState<number[]>([]);
+    const [taskConflicts, setTaskConflicts] = useState<PolicyConflict[]>([]);
 
     useEffect(() => {
         fetchTasks();
@@ -64,10 +66,12 @@ export default function TasksPage() {
     const handleCreateTask = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
+        setTaskConflicts([]);
         try {
-            await api.post('/tasks/', { name: newTaskName, description: newTaskDesc });
+            const res = await api.post('/tasks/', { name: newTaskName, description: newTaskDesc });
             setNewTaskName('');
             setNewTaskDesc('');
+            setTaskConflicts(res.data?.conflicts ?? []);
             fetchTasks();
         } catch (error) {
             console.error("Failed to create task", error);
@@ -146,6 +150,27 @@ export default function TasksPage() {
                     </button>
                 </form>
             </div>
+
+            {taskConflicts.length > 0 && (
+                <div className="bg-white shadow sm:rounded-lg p-6 border border-amber-300">
+                    <div className="flex items-start justify-between mb-3">
+                        <h3 className="text-lg leading-6 font-medium text-amber-800 flex items-center gap-2">
+                            <AlertTriangle className="w-5 h-5" />
+                            {taskConflicts.length} potential conflict{taskConflicts.length === 1 ? '' : 's'} in the new task
+                        </h3>
+                        <button onClick={() => setTaskConflicts([])} className="text-gray-400 hover:text-gray-600">
+                            <X className="w-5 h-5" />
+                        </button>
+                    </div>
+                    <p className="text-sm text-gray-500 mb-3">
+                        The generated policies were saved, but some overlap with existing ones (or each other).
+                        Review them on the <span className="font-medium">Policies</span> page and delete or adjust any you don&apos;t want.
+                    </p>
+                    <div className="space-y-2">
+                        {taskConflicts.map((c, i) => <ConflictCard key={i} conflict={c} />)}
+                    </div>
+                </div>
+            )}
 
             <div className="bg-white shadow overflow-hidden sm:rounded-md">
                 <div className="px-4 py-5 sm:px-6 border-b border-gray-200">

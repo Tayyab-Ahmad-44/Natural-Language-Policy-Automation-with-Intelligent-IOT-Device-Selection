@@ -92,6 +92,9 @@ class PolicyBase(BaseModel):
 
 class PolicyCreate(PolicyBase):
     repeat_interval_seconds: Optional[int] = None
+    # When resolving a conflict by "replace old with new", the IDs of the
+    # existing policies to delete before saving this one.
+    replace_policy_ids: List[int] = []
 
 class Policy(PolicyBase):
     id: int
@@ -122,6 +125,13 @@ class Task(TaskBase):
 
     model_config = ConfigDict(from_attributes=True)
 
+# Forward reference resolved at the bottom of the module (PolicyConflict is
+# defined further down). create_task returns the task plus any conflicts found
+# among its generated policies / against existing ones.
+class TaskCreateResponse(BaseModel):
+    task: Task
+    conflicts: List["PolicyConflict"] = []
+
 
 # ─── LLM Response ─────────────────────────────────────────────────
 
@@ -136,11 +146,24 @@ class DAGValidation(BaseModel):
     valid: bool
     errors: List[str] = []
 
+class PolicyConflict(BaseModel):
+    policy_id: Optional[int] = None       # existing policy's id (None if an unsaved sibling)
+    policy_name: str = ""
+    existing_text: str = ""
+    existing_window: Dict[str, Any] = {}
+    shared_devices: List[str] = []
+    type: str = "overlap"                 # contradiction | redundancy | overlap
+    severity: str = "medium"              # high | medium | low
+    explanation: str = ""
+    suggestion: str = ""
+    new_policy_name: Optional[str] = None  # which new policy triggered it (task flow)
+
 class PolicyPreviewResponse(BaseModel):
     execution_dag: ExecutionDAG
     time_window: dict
     validation: DAGValidation
     levels: List[List[str]] = []  # topological levels for frontend layout
+    conflicts: List[PolicyConflict] = []
 
 
 # ─── Execution Tracking ───────────────────────────────────────────
@@ -187,3 +210,7 @@ class SensorReadingResponse(BaseModel):
     capability_name: str
     data: Any
     received_at: str
+
+
+# Resolve forward reference (PolicyConflict is defined after TaskCreateResponse).
+TaskCreateResponse.model_rebuild()

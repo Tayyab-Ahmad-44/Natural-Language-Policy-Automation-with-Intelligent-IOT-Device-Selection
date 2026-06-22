@@ -9,7 +9,7 @@ import os
 import tempfile
 import asyncio
 import httpx
-import models, schemas, database, llm, dag_utils, executor, vision
+import models, schemas, database, llm, dag_utils, executor, vision, conflicts
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from load_dotenv import load_dotenv
@@ -524,11 +524,18 @@ def preview_policy(policy: schemas.PolicyCreate, db: Session = Depends(get_db)):
         validation = dag_utils.validate_dag(parsed.execution_dag)
         levels = dag_utils.topological_levels(parsed.execution_dag)
 
+        # Check for conflicts against already-stored policies.
+        conflict_list = conflicts.check_against_existing(
+            policy.name, policy.original_text,
+            parsed.execution_dag, parsed.time_window, db,
+        )
+
         return schemas.PolicyPreviewResponse(
             execution_dag=parsed.execution_dag,
             time_window=parsed.time_window,
             validation=validation,
             levels=levels,
+            conflicts=conflict_list,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -538,6 +545,15 @@ def create_policy(policy: schemas.PolicyCreate, db: Session = Depends(get_db)):
     """Parse natural language policy via LLM and save with DAG execution plan."""
     devices_data = _serialize_devices(db)
     parsed = llm.parse_policy_with_llm(policy.original_text, devices_data)
+
+    # Conflict resolution: "replace old with new" deletes the chosen existing
+    # policies before saving this one.
+    for pid in policy.replace_policy_ids or []:
+        existing = db.query(models.Policy).filter(models.Policy.id == pid).first()
+        if existing:
+            db.delete(existing)
+    if policy.replace_policy_ids:
+        db.commit()
 
     db_policy = models.Policy(
         name=policy.name,
@@ -572,7 +588,7 @@ def delete_policy(policy_id: int, db: Session = Depends(get_db)):
 # TASK ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════
 
-@application.post("/api/tasks/", response_model=schemas.Task)
+@application.post("/api/tasks/", response_model=schemas.TaskCreateResponse)
 def create_task(task: schemas.TaskCreate, db: Session = Depends(get_db)):
     db_task = models.Task(
         name=task.name,
@@ -586,57 +602,62 @@ def create_task(task: schemas.TaskCreate, db: Session = Depends(get_db)):
     devices_data = _serialize_devices(db)
     policy_rules = llm.break_down_task(task.description, devices_data)
 
+    # Build the policy models WITHOUT committing yet, so conflict detection can
+    # run against the pre-existing policies (and the task's own siblings).
+    new_policies: List[models.Policy] = []
     for rule in policy_rules:
         try:
             if isinstance(rule, dict) and rule.get("execution_dag") is not None:
-                # New DAG format from LLM
                 original_text = rule.get("original_text") or f"{task.name} - Policy"
                 time_window = rule.get("time_window", {"from_time": "00:00", "to_time": "23:59"})
-                execution_dag = rule.get("execution_dag", {"nodes": []})
-
-                db_policy = models.Policy(
-                    name=f"{task.name} - {original_text}",
-                    original_text=original_text,
-                    start_time=time_window.get("from_time", "00:00"),
-                    end_time=time_window.get("to_time", "23:59"),
-                    execution_plan=execution_dag,
-                    task_id=db_task.id,
-                )
-                db.add(db_policy)
+                execution_plan = rule.get("execution_dag", {"nodes": []})
             elif isinstance(rule, dict) and rule.get("execution_plan") is not None:
-                # Legacy flat format — convert to DAG
                 original_text = rule.get("original_text") or f"{task.name} - Policy"
                 time_window = rule.get("time_window", {"from_time": "00:00", "to_time": "23:59"})
-                execution_plan = rule.get("execution_plan", [])
-                dag = dag_utils.migrate_flat_to_dag(execution_plan)
-
-                db_policy = models.Policy(
-                    name=f"{task.name} - {original_text}",
-                    original_text=original_text,
-                    start_time=time_window.get("from_time", "00:00"),
-                    end_time=time_window.get("to_time", "23:59"),
-                    execution_plan=dag_utils.dag_to_dict(dag),
-                    task_id=db_task.id,
-                )
-                db.add(db_policy)
+                dag = dag_utils.migrate_flat_to_dag(rule.get("execution_plan", []))
+                execution_plan = dag_utils.dag_to_dict(dag)
             else:
                 # Fallback: rule is a string -> parse via LLM
                 parsed = llm.parse_policy_with_llm(rule, devices_data)
-                db_policy = models.Policy(
-                    name=f"{task.name} - Rule",
-                    original_text=rule,
-                    start_time=parsed.time_window["from_time"],
-                    end_time=parsed.time_window["to_time"],
-                    execution_plan=dag_utils.dag_to_dict(parsed.execution_dag),
-                    task_id=db_task.id,
-                )
-                db.add(db_policy)
+                original_text = rule if isinstance(rule, str) else f"{task.name} - Rule"
+                time_window = parsed.time_window
+                execution_plan = dag_utils.dag_to_dict(parsed.execution_dag)
+
+            new_policies.append(models.Policy(
+                name=f"{task.name} - {original_text}",
+                original_text=original_text,
+                start_time=time_window.get("from_time", "00:00"),
+                end_time=time_window.get("to_time", "23:59"),
+                execution_plan=execution_plan,
+                task_id=db_task.id,
+            ))
         except Exception as e:
             print(f"Failed to create policy for rule '{rule}': {e}")
 
+    # Conflict detection: each new policy vs already-stored policies plus the
+    # task's earlier siblings (so each intra-task pair is reported once).
+    existing_cands = conflicts.candidates_from_db(db)
+    sibling_descriptors: List[dict] = []
+    all_conflicts: List[dict] = []
+    for p in new_policies:
+        descriptor = {
+            "name": p.name,
+            "text": p.original_text,
+            "window": {"from_time": p.start_time, "to_time": p.end_time},
+            "actions": conflicts.extract_actions(p.execution_plan),
+        }
+        found = conflicts.detect_conflicts(descriptor, existing_cands + sibling_descriptors)
+        for c in found:
+            c["new_policy_name"] = p.name
+        all_conflicts.extend(found)
+        sibling_descriptors.append(descriptor)
+
+    for p in new_policies:
+        db.add(p)
     db.commit()
     db.refresh(db_task)
-    return db_task
+
+    return {"task": db_task, "conflicts": all_conflicts}
 
 @application.get("/api/tasks/", response_model=List[schemas.Task])
 def read_tasks(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
