@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import api, { Device, Capability, DeviceDraft, discoverDevices, bulkCreateDevices } from '@/lib/api';
 import { Plus, Server, Trash2, Pencil, Radar, Loader2 } from 'lucide-react';
+import VlmTestPanel from '@/components/VlmTestPanel';
 
 export default function DevicesPage() {
     const [devices, setDevices] = useState<Device[]>([]);
@@ -518,6 +519,8 @@ export default function DevicesPage() {
                 </div>
                 )}
             </div>
+
+            <VlmTestPanel />
 
             <div className="bg-white shadow overflow-hidden sm:rounded-md">
                 <ul className="divide-y divide-gray-200">

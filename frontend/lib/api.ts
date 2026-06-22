@@ -166,6 +166,38 @@ export async function bulkCreateDevices(devices: DeviceDraft[]): Promise<DeviceB
     return resp.data;
 }
 
+// ─── VLM / Camera test ───────────────────────────────────────────
+
+export interface VlmSample {
+    name: string;
+    type: 'image' | 'video';
+}
+
+export interface VlmResult {
+    detected: boolean;
+    labels: string[];
+    summary: string;
+    confidence: number;
+    observations: Record<string, unknown>;
+    recommended_action: unknown;
+    provider: string;
+    model: string;
+    image_source: Record<string, unknown>;
+    raw: Record<string, unknown>;
+}
+
+export async function getVlmSamples(): Promise<VlmSample[]> {
+    const resp = await api.get('/vlm/samples');
+    return resp.data.samples;
+}
+
+export async function testVlm(form: FormData): Promise<VlmResult> {
+    const resp = await api.post('/vlm/test', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return resp.data;
+}
+
 export async function previewPolicy(name: string, original_text: string): Promise<PolicyPreviewResponse> {
     const resp = await api.post('/policies/preview', { name, original_text });
     return resp.data;

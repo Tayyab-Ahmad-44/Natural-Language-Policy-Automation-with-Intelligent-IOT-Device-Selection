@@ -1,13 +1,15 @@
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func
 from contextlib import asynccontextmanager
 from typing import List, Optional, Dict
 import json
+import os
+import tempfile
 import asyncio
 import httpx
-import models, schemas, database, llm, dag_utils, executor
+import models, schemas, database, llm, dag_utils, executor, vision
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from load_dotenv import load_dotenv
@@ -869,6 +871,129 @@ async def transcribe_audio(file: UploadFile = File(...)):
         return {"text": transcription.text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════
+# VLM / CAMERA TEST PLAYGROUND
+# ═══════════════════════════════════════════════════════════════════
+#
+# Lets the frontend exercise the camera VLM pipeline directly: upload an image
+# or video (or pick a bundled test_media sample / paste a URL), give a prompt,
+# and get back the same normalized JSON that VLM DAG nodes produce.
+
+_TEST_MEDIA_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "test_media"
+)
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
+_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+
+
+def _classify_media(filename: str, content_type: Optional[str]) -> Optional[str]:
+    """Return 'video', 'image', or None based on content type / extension."""
+    ct = (content_type or "").lower()
+    if ct.startswith("video/"):
+        return "video"
+    if ct.startswith("image/"):
+        return "image"
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext in _VIDEO_EXTS:
+        return "video"
+    if ext in _IMAGE_EXTS:
+        return "image"
+    return None
+
+
+@application.get("/api/vlm/samples")
+def list_vlm_samples():
+    """List media files bundled in test_media that can be used to test the VLM."""
+    samples = []
+    if os.path.isdir(_TEST_MEDIA_DIR):
+        for name in sorted(os.listdir(_TEST_MEDIA_DIR)):
+            kind = _classify_media(name, None)
+            if kind:
+                samples.append({"name": name, "type": kind})
+    return {"samples": samples}
+
+
+@application.post("/api/vlm/test")
+async def test_vlm(
+    file: Optional[UploadFile] = File(None),
+    sample: Optional[str] = Form(None),
+    image_url: Optional[str] = Form(None),
+    video_url: Optional[str] = Form(None),
+    prompt: Optional[str] = Form(None),
+    labels: Optional[str] = Form(None),
+    provider: Optional[str] = Form(None),
+    model: Optional[str] = Form(None),
+    video_frame_count: Optional[int] = Form(None),
+):
+    """Run a one-off VLM analysis on an uploaded file, a bundled sample, or a URL."""
+    args: Dict = {}
+    if prompt and prompt.strip():
+        args["prompt"] = prompt.strip()
+    if labels and labels.strip():
+        args["labels"] = [s.strip() for s in labels.split(",") if s.strip()]
+    if provider and provider.strip():
+        args["provider"] = provider.strip()
+    if model and model.strip():
+        args["model"] = model.strip()
+    if video_frame_count:
+        args["video_frame_count"] = video_frame_count
+
+    temp_path: Optional[str] = None
+    try:
+        # 1) Uploaded file takes priority.
+        if file is not None and file.filename:
+            kind = _classify_media(file.filename, file.content_type)
+            if kind is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Unsupported file type. Upload an image or a video.",
+                )
+            data = await file.read()
+            suffix = os.path.splitext(file.filename)[1] or (".mp4" if kind == "video" else ".jpg")
+            fd, temp_path = tempfile.mkstemp(suffix=suffix, prefix="vlm_test_")
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            args["video_path" if kind == "video" else "image_path"] = temp_path
+
+        # 2) Bundled sample from test_media.
+        elif sample and sample.strip():
+            safe_name = os.path.basename(sample.strip())  # prevent path traversal
+            sample_path = os.path.join(_TEST_MEDIA_DIR, safe_name)
+            if not os.path.isfile(sample_path):
+                raise HTTPException(status_code=404, detail=f"Sample not found: {safe_name}")
+            kind = _classify_media(safe_name, None)
+            if kind is None:
+                raise HTTPException(status_code=400, detail="Sample is not an image or video.")
+            args["video_path" if kind == "video" else "image_path"] = sample_path
+
+        # 3) Remote URL.
+        elif video_url and video_url.strip():
+            args["video_url"] = video_url.strip()
+        elif image_url and image_url.strip():
+            args["image_url"] = image_url.strip()
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide a file upload, a sample name, an image_url, or a video_url.",
+            )
+
+        result = await vision.analyze_camera_image("", args)
+        return result
+
+    except vision.VisionAnalysisError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"VLM test failed: {str(e)[:300]}")
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 
 # ═══════════════════════════════════════════════════════════════════
