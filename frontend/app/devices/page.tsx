@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from 'react';
-import api, { Device, Capability, DeviceDraft, discoverDevices, bulkCreateDevices } from '@/lib/api';
+import api, { Device, Capability, DeviceDraft, discoverDevices, bulkCreateDevices, bulkDeleteDevices } from '@/lib/api';
 import { Plus, Server, Trash2, Pencil, Radar, Loader2 } from 'lucide-react';
 import VlmTestPanel from '@/components/VlmTestPanel';
 
@@ -22,6 +22,10 @@ export default function DevicesPage() {
     const [discoveredDevices, setDiscoveredDevices] = useState<DeviceDraft[]>([]);
     const [rawSample, setRawSample] = useState<string | null>(null);
     const [importing, setImporting] = useState(false);
+
+    // Bulk selection / deletion
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+    const [deleting, setDeleting] = useState(false);
 
     // Capabilities state
     const [capabilities, setCapabilities] = useState<Capability[]>([]);
@@ -152,6 +156,44 @@ export default function DevicesPage() {
             alert('Failed to import devices.');
         } finally {
             setImporting(false);
+        }
+    };
+
+    const allSelected = devices.length > 0 && selectedIds.size === devices.length;
+
+    const toggleSelectAll = () => {
+        if (allSelected) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(devices.map((d) => d.id)));
+        }
+    };
+
+    const toggleSelectOne = (id: number) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedIds.size === 0) return;
+        if (!confirm(`Delete ${selectedIds.size} device(s)? This cannot be undone.`)) return;
+        setDeleting(true);
+        try {
+            await bulkDeleteDevices([...selectedIds]);
+            setSelectedIds(new Set());
+            fetchDevices();
+        } catch (error) {
+            console.error('Failed to delete devices', error);
+            alert('Failed to delete the selected devices.');
+        } finally {
+            setDeleting(false);
         }
     };
 
@@ -523,10 +565,44 @@ export default function DevicesPage() {
             <VlmTestPanel />
 
             <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                {devices.length > 0 && (
+                    <div className="px-4 py-3 sm:px-6 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+                        <label className="flex items-center gap-3 text-sm font-medium text-gray-700 cursor-pointer select-none">
+                            <input
+                                type="checkbox"
+                                checked={allSelected}
+                                ref={(el) => {
+                                    if (el) el.indeterminate = selectedIds.size > 0 && !allSelected;
+                                }}
+                                onChange={toggleSelectAll}
+                                className="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                            />
+                            {selectedIds.size > 0 ? `${selectedIds.size} selected` : 'Select all'}
+                        </label>
+                        {selectedIds.size > 0 && (
+                            <button
+                                type="button"
+                                onClick={handleBulkDelete}
+                                disabled={deleting}
+                                className="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-60"
+                            >
+                                {deleting
+                                    ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Deleting…</>
+                                    : <><Trash2 className="w-4 h-4 mr-2" /> Delete Selected ({selectedIds.size})</>}
+                            </button>
+                        )}
+                    </div>
+                )}
                 <ul className="divide-y divide-gray-200">
                     {devices.map((device) => (
                         <li key={device.id}>
                             <div className="px-4 py-4 flex items-center sm:px-6">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedIds.has(device.id)}
+                                    onChange={() => toggleSelectOne(device.id)}
+                                    className="h-4 w-4 mr-4 flex-shrink-0 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500"
+                                />
                                 <div className="min-w-0 flex-1 sm:flex sm:items-center sm:justify-between">
                                     <div className="flex items-center">
                                         <div className="flex-shrink-0">

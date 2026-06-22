@@ -180,6 +180,11 @@ export async function bulkCreateDevices(devices: DeviceDraft[]): Promise<DeviceB
     return resp.data;
 }
 
+export async function bulkDeleteDevices(ids: number[]): Promise<{ deleted: number[] }> {
+    const resp = await api.post('/devices/bulk-delete', { ids });
+    return resp.data;
+}
+
 // ─── VLM / Camera test ───────────────────────────────────────────
 
 export interface VlmSample {

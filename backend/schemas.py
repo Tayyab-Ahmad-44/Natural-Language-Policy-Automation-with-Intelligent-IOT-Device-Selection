@@ -55,6 +55,9 @@ class DeviceBulkCreateResponse(BaseModel):
     created: List[Device] = []
     skipped: List[str] = []   # names skipped because they already exist
 
+class DeviceBulkDeleteRequest(BaseModel):
+    ids: List[int] = []
+
 
 # ─── DAG Schema (new) ─────────────────────────────────────────────
 

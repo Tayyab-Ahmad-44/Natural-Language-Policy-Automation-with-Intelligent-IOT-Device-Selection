@@ -505,6 +505,19 @@ def bulk_create_devices(payload: schemas.DeviceBulkCreate, db: Session = Depends
     return {"created": created, "skipped": skipped}
 
 
+@application.post("/api/devices/bulk-delete")
+def bulk_delete_devices(payload: schemas.DeviceBulkDeleteRequest, db: Session = Depends(get_db)):
+    """Delete many devices at once by id. Unknown ids are ignored."""
+    if not payload.ids:
+        return {"deleted": []}
+    devices = db.query(models.Device).filter(models.Device.id.in_(payload.ids)).all()
+    deleted = [d.id for d in devices]
+    for d in devices:
+        db.delete(d)
+    db.commit()
+    return {"deleted": deleted}
+
+
 # ═══════════════════════════════════════════════════════════════════
 # POLICY ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════
