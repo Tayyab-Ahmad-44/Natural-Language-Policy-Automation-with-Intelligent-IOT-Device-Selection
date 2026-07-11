@@ -135,8 +135,7 @@ ONLY return the JSON string, no markdown formatting, no explanation.
 """
 
     try:
-        response = llm_provider.client.chat.completions.create(
-            model=llm_provider.MODEL,
+        response = llm_provider.create_chat_completion(
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
             max_tokens=2048,
@@ -209,8 +208,7 @@ ONLY return the JSON string, no markdown formatting, no explanation.
 """
 
     try:
-        response = llm_provider.client.chat.completions.create(
-            model=llm_provider.MODEL,
+        response = llm_provider.create_chat_completion(
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
             max_tokens=2048,
@@ -287,8 +285,7 @@ Return ONLY a JSON object of the form {{"devices": [...]}}. No markdown, no expl
 """
 
     try:
-        response = llm_provider.client.chat.completions.create(
-            model=llm_provider.MODEL,
+        response = llm_provider.create_chat_completion(
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
             max_tokens=4096,

@@ -246,8 +246,7 @@ For EACH candidate, return an object:
 Return ONLY JSON of the form {{"results": [ ... ]}}. No markdown, no prose.
 """
 
-    response = llm.llm_provider.client.chat.completions.create(
-        model=llm.llm_provider.MODEL,
+    response = llm.llm_provider.create_chat_completion(
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1,
         max_tokens=2048,
