@@ -1,6 +1,17 @@
 import json
+from typing import List
+
+from pydantic import ValidationError
+
+import dag_utils
 import llm_provider
 import schemas
+
+# Bounded retry budget for DAG generation: 1 initial attempt + up to 2
+# corrections. Kept small -- each retry costs a full round trip and re-sends
+# the whole prompt, so this trades a little latency for rejecting malformed
+# or ungrounded output instead of silently degrading to an empty DAG.
+MAX_DAG_GENERATION_ATTEMPTS = 3
 
 # ──────────────────────────────────────────────────────────────────
 # Few-shot examples for DAG generation
@@ -106,9 +117,88 @@ RULES FOR BUILDING THE DAG:
 """
 
 
-def parse_policy_with_llm(policy_text: str, devices_data: list) -> schemas.PolicyResponseLLM:
+def _strip_markdown_fences(text: str) -> str:
+    text = text.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    if text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
+
+
+def _ground_dag_nodes(dag: schemas.ExecutionDAG, devices_data: list) -> List[str]:
+    """Verify every node's (device, capability) pair exists in the live device
+    catalog. Returns one error string per ungrounded node, empty if all nodes
+    reference real devices/capabilities.
     """
-    Uses Groq LLM to parse natural language policy into a structured DAG execution plan.
+    catalog = {d["name"]: {c["name"] for c in d.get("capabilities", [])} for d in devices_data}
+    errors: List[str] = []
+    for node in dag.nodes:
+        if node.device not in catalog:
+            errors.append(
+                f"Node '{node.id}': device '{node.device}' does not exist. "
+                f"Available devices: {sorted(catalog)}"
+            )
+            continue
+        if node.capability not in catalog[node.device]:
+            errors.append(
+                f"Node '{node.id}': capability '{node.capability}' does not exist on device "
+                f"'{node.device}'. Available capabilities for '{node.device}': {sorted(catalog[node.device])}"
+            )
+    return errors
+
+
+def _validate_and_ground(parsed: schemas.PolicyResponseLLM, devices_data: list) -> List[str]:
+    """Structural + grounding checks run before a generated DAG is accepted.
+    An empty node list is left alone -- the prompt explicitly allows an empty
+    DAG for ambiguous policies, so that's not a failure to retry on.
+    """
+    if not parsed.execution_dag.nodes:
+        return []
+    errors = list(dag_utils.validate_dag(parsed.execution_dag).errors)
+    errors += _ground_dag_nodes(parsed.execution_dag, devices_data)
+    return errors
+
+
+def _append_correction(messages: list, assistant_text: str, errors: List[str]) -> list:
+    """Feed the model its own bad output plus the specific errors, so the
+    retry is a targeted correction rather than a blind re-ask.
+    """
+    correction = (
+        "Your previous response had the following problem(s):\n"
+        + "\n".join(f"- {e}" for e in errors)
+        + "\n\nFix ONLY these problems and return the corrected JSON object. "
+          "ONLY return the JSON string, no markdown formatting, no explanation."
+    )
+    return messages + [
+        {"role": "assistant", "content": assistant_text},
+        {"role": "user", "content": correction},
+    ]
+
+
+def _empty_policy_response() -> schemas.PolicyResponseLLM:
+    return schemas.PolicyResponseLLM(
+        execution_dag=schemas.ExecutionDAG(nodes=[]),
+        time_window={"from_time": "00:00", "to_time": "23:59"},
+    )
+
+
+def parse_policy_with_llm(
+    policy_text: str,
+    devices_data: list,
+    max_attempts: int = MAX_DAG_GENERATION_ATTEMPTS,
+) -> schemas.PolicyResponseLLM:
+    """
+    Uses the configured LLM to parse a natural language policy into a
+    structured DAG execution plan.
+
+    Every candidate response is schema-validated (pydantic) and grounded
+    (every node's device/capability must exist in devices_data) before being
+    accepted. On failure, the specific error is fed back to the model as
+    correction context for up to `max_attempts` total tries. If every attempt
+    fails, falls back to an empty DAG rather than raising.
     """
     devices_json = json.dumps(devices_data, indent=2)
 
@@ -134,31 +224,53 @@ If the policy is ambiguous or no device matches, do your best to infer or return
 ONLY return the JSON string, no markdown formatting, no explanation.
 """
 
-    try:
-        response = llm_provider.create_chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-            max_tokens=2048,
-        )
-        text = response.choices[0].message.content.strip()
+    messages: list = [{"role": "user", "content": prompt}]
+    last_errors: List[str] = []
 
-        # Clean up potential markdown code blocks
-        if text.startswith("```json"):
-            text = text[7:]
-        if text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = llm_provider.create_chat_completion(
+                messages=messages,
+                temperature=0.7,
+                max_tokens=2048,
+            )
+            text = response.choices[0].message.content.strip()
+        except Exception as e:
+            # Transport/provider failure -- resending the same messages won't
+            # change the outcome, so don't burn retries on it.
+            print(f"LLM Error (attempt {attempt}/{max_attempts}): {e}")
+            return _empty_policy_response()
 
-        data = json.loads(text.strip())
-        return schemas.PolicyResponseLLM(**data)
+        cleaned = _strip_markdown_fences(text)
 
-    except Exception as e:
-        print(f"LLM Error: {e}")
-        return schemas.PolicyResponseLLM(
-            execution_dag=schemas.ExecutionDAG(nodes=[]),
-            time_window={"from_time": "00:00", "to_time": "23:59"},
-        )
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError as e:
+            last_errors = [f"Response was not valid JSON ({e})."]
+            messages = _append_correction(messages, text, last_errors)
+            continue
+
+        if not isinstance(data, dict):
+            last_errors = [f"Response must be a JSON object with \"time_window\" and \"execution_dag\" keys, got {type(data).__name__}."]
+            messages = _append_correction(messages, text, last_errors)
+            continue
+
+        try:
+            parsed = schemas.PolicyResponseLLM(**data)
+        except ValidationError as e:
+            last_errors = [f"Response did not match the required schema: {e}"]
+            messages = _append_correction(messages, text, last_errors)
+            continue
+
+        errors = _validate_and_ground(parsed, devices_data)
+        if not errors:
+            return parsed
+
+        last_errors = errors
+        messages = _append_correction(messages, text, errors)
+
+    print(f"LLM DAG generation failed after {max_attempts} attempt(s): {last_errors}")
+    return _empty_policy_response()
 
 
 def break_down_task(task_description: str, devices_data: list) -> list:
