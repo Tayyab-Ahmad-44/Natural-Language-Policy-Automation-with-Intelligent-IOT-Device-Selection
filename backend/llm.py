@@ -1,12 +1,6 @@
-import os
 import json
-from groq import Groq
+import llm_provider
 import schemas
-from load_dotenv import load_dotenv
-
-load_dotenv()
-
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # ──────────────────────────────────────────────────────────────────
 # Few-shot examples for DAG generation
@@ -141,8 +135,8 @@ ONLY return the JSON string, no markdown formatting, no explanation.
 """
 
     try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = llm_provider.client.chat.completions.create(
+            model=llm_provider.MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
             max_tokens=2048,
@@ -215,8 +209,8 @@ ONLY return the JSON string, no markdown formatting, no explanation.
 """
 
     try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = llm_provider.client.chat.completions.create(
+            model=llm_provider.MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
             max_tokens=2048,
@@ -293,8 +287,8 @@ Return ONLY a JSON object of the form {{"devices": [...]}}. No markdown, no expl
 """
 
     try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = llm_provider.client.chat.completions.create(
+            model=llm_provider.MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
             max_tokens=4096,
