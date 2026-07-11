@@ -114,7 +114,7 @@ VLM_PROVIDER=gemini            # or groq
 ```
 
 `LLM_PROVIDER` picks the SDK (`groq` or `openai`); each provider reads its own API key and falls
-back to a sensible default model (`llama-3.3-70b-versatile` for Groq, `gpt-4o-mini` for OpenAI)
+back to a sensible default model (`llama-3.3-70b-versatile` for Groq, `gpt-5.4-mini` for OpenAI)
 unless `LLM_MODEL` is set. This is independent of `VLM_PROVIDER`, which only controls camera/video
 scene analysis.
 
@@ -208,4 +208,3 @@ python -m eval.run --mock
 
 `eval/run.py` reads whichever `LLM_PROVIDER` is configured in `backend/.env`, so switching between
 Groq and OpenAI also changes which model the harness evaluates.
-

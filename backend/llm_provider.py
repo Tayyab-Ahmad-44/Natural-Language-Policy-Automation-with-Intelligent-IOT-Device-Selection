@@ -25,7 +25,7 @@ LLM_PROVIDER = (os.getenv("LLM_PROVIDER") or "groq").strip().lower()
 
 _DEFAULT_MODELS = {
     "groq": "llama-3.3-70b-versatile",
-    "openai": "gpt-4o-mini",
+    "openai": "gpt-5.4-mini",
 }
 
 if LLM_PROVIDER not in _DEFAULT_MODELS:
