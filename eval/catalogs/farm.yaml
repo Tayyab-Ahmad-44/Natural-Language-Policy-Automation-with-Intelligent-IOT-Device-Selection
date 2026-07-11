@@ -47,6 +47,7 @@ devices:
         url: http://farm/fert/inject
         method: POST
         input_schema: {liters: float}
+        sensitive: true
       - name: Mix
         url: http://farm/fert/mix
         method: POST
@@ -83,6 +84,7 @@ devices:
         url: http://farm/drone/spray
         method: POST
         input_schema: {area_id: string}
+        sensitive: true
       - name: Return
         url: http://farm/drone/home
         method: POST

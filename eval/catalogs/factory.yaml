@@ -7,6 +7,7 @@ devices:
         url: http://factory/press/start
         method: POST
         input_schema: {pressure: integer}
+        sensitive: true
       - name: Stop
         url: http://factory/press/stop
         method: POST
@@ -63,6 +64,7 @@ devices:
         url: http://factory/conveyor/start
         method: POST
         input_schema: {speed: integer}
+        sensitive: true
       - name: Stop
         url: http://factory/conveyor/stop
         method: POST
@@ -71,6 +73,7 @@ devices:
         url: http://factory/conveyor/reverse
         method: POST
         input_schema: {}
+        sensitive: true
 
   - name: Robotic Arm
     type: Robot
@@ -79,10 +82,12 @@ devices:
         url: http://factory/arm/move
         method: POST
         input_schema: {x: float, y: float, z: float}
+        sensitive: true
       - name: Grip
         url: http://factory/arm/grip
         method: POST
         input_schema: {force: integer}
+        sensitive: true
       - name: Release
         url: http://factory/arm/release
         method: POST
@@ -99,6 +104,7 @@ devices:
         url: http://factory/siren/silence
         method: POST
         input_schema: {}
+        sensitive: true
 
   - name: Quality Camera
     type: Camera

@@ -443,6 +443,68 @@ def make_node_fn(
 
 
 # ──────────────────────────────────────────────────────────────────
+# Post-run device-state reporting
+# ──────────────────────────────────────────────────────────────────
+
+def _summarize_device_state(
+    dag: schemas.ExecutionDAG,
+    cap_map: Dict[str, Optional[Dict]],
+    node_results: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Reports what actually happened to real device state, not just pass/fail
+    counts. Only state-changing capabilities (POST/PUT/PATCH) count toward
+    "applied"/"not applied" -- read-only nodes (GET/SSE/VLM) don't change
+    anything, so a read failure alone never marks the run inconsistent.
+    """
+    device_state: List[Dict[str, Any]] = []
+    applied: List[str] = []
+    not_applied: List[str] = []
+
+    for node in dag.nodes:
+        result = node_results.get(node.id, {})
+        status = result.get("status", "pending")
+        info = cap_map.get(node.id)
+        method = (info or {}).get("method", "")
+        state_changing = method in ("POST", "PUT", "PATCH")
+
+        device_state.append({
+            "node_id": node.id,
+            "device": node.device,
+            "capability": node.capability,
+            "status": status,
+            "state_changing": state_changing,
+        })
+
+        if not state_changing:
+            continue
+        if status == "success":
+            applied.append(f"{node.device}/{node.capability}")
+        elif status in ("failed", "skipped"):
+            not_applied.append(f"{node.device}/{node.capability} ({status})")
+
+    inconsistent_state = bool(applied) and bool(not_applied)
+
+    if inconsistent_state:
+        state_summary = (
+            f"Partial effect: applied [{', '.join(applied)}]; "
+            f"did NOT apply [{', '.join(not_applied)}] -- system is in a mixed state, verify manually."
+        )
+    elif not_applied:
+        state_summary = f"No state-changing action was applied: [{', '.join(not_applied)}]."
+    elif applied:
+        state_summary = f"All state-changing actions applied: [{', '.join(applied)}]."
+    else:
+        state_summary = "No state-changing actions in this run."
+
+    return {
+        "device_state": device_state,
+        "inconsistent_state": inconsistent_state,
+        "state_summary": state_summary,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────
 # DB helpers
 # ──────────────────────────────────────────────────────────────────
 
@@ -570,6 +632,26 @@ async def execute_policy(
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    if policy.requires_confirmation and not policy.confirmed:
+        blocked_run = models.ExecutionRun(
+            policy_id=policy_id,
+            status="blocked_pending_confirmation",
+            triggered_by=triggered_by,
+            started_at=now,
+            completed_at=now,
+            summary={
+                "error": (
+                    "Execution blocked: this policy contains sensitive "
+                    "(destructive/security-relevant) actions and has not been "
+                    "confirmed. POST /api/policies/{id}/confirm to arm it."
+                ),
+            },
+        )
+        db.add(blocked_run)
+        db.commit()
+        db.refresh(blocked_run)
+        return blocked_run
+
     # Create ExecutionRun
     run = models.ExecutionRun(
         policy_id=policy_id,
@@ -623,6 +705,9 @@ async def execute_policy(
         else:
             run_status = "partial_failure"
 
+        cap_map = resolve_capabilities(dag, db)
+        state_report = _summarize_device_state(dag, cap_map, node_results)
+
         run.status = run_status
         run.completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         run.summary = {
@@ -631,6 +716,7 @@ async def execute_policy(
             "failed": failed,
             "skipped": skipped,
             "condition_not_met": condition_not_met,
+            **state_report,
         }
         db.commit()
         db.refresh(run)
@@ -666,6 +752,31 @@ async def execute_policy_streaming(
         return
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if policy.requires_confirmation and not policy.confirmed:
+        blocked_run = models.ExecutionRun(
+            policy_id=policy_id,
+            status="blocked_pending_confirmation",
+            triggered_by=triggered_by,
+            started_at=now,
+            completed_at=now,
+            summary={
+                "error": (
+                    "Execution blocked: this policy contains sensitive "
+                    "(destructive/security-relevant) actions and has not been "
+                    "confirmed. POST /api/policies/{id}/confirm to arm it."
+                ),
+            },
+        )
+        db.add(blocked_run)
+        db.commit()
+        db.refresh(blocked_run)
+        yield {
+            "type": "run_blocked",
+            "run_id": blocked_run.id,
+            "message": blocked_run.summary["error"],
+        }
+        return
 
     # Create ExecutionRun
     run = models.ExecutionRun(
@@ -723,15 +834,15 @@ async def execute_policy_streaming(
 
         # Finalize the run
         db.refresh(run)
-        node_results = {}
+        step_statuses = {}
         for step in run.steps:
-            node_results[step.node_id] = step.status
+            step_statuses[step.node_id] = step.status
 
         total = len(dag.nodes)
-        success = sum(1 for s in node_results.values() if s == "success")
-        failed = sum(1 for s in node_results.values() if s == "failed")
-        skipped = sum(1 for s in node_results.values() if s == "skipped")
-        condition_not_met = sum(1 for s in node_results.values() if s == "condition_not_met")
+        success = sum(1 for s in step_statuses.values() if s == "success")
+        failed = sum(1 for s in step_statuses.values() if s == "failed")
+        skipped = sum(1 for s in step_statuses.values() if s == "skipped")
+        condition_not_met = sum(1 for s in step_statuses.values() if s == "condition_not_met")
 
         if failed == 0 and skipped == 0:
             run_status = "completed"
@@ -739,6 +850,10 @@ async def execute_policy_streaming(
             run_status = "failed"
         else:
             run_status = "partial_failure"
+
+        cap_map = resolve_capabilities(dag, db)
+        node_results = {node_id: {"status": status} for node_id, status in step_statuses.items()}
+        state_report = _summarize_device_state(dag, cap_map, node_results)
 
         run.status = run_status
         run.completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -748,6 +863,7 @@ async def execute_policy_streaming(
             "failed": failed,
             "skipped": skipped,
             "condition_not_met": condition_not_met,
+            **state_report,
         }
         db.commit()
 

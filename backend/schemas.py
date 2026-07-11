@@ -11,6 +11,7 @@ class CapabilityBase(BaseModel):
     url: str
     method: str
     input_schema: Dict[str, Any]
+    sensitive: bool = False
 
 class CapabilityCreate(CapabilityBase):
     pass
@@ -108,6 +109,8 @@ class Policy(PolicyBase):
     last_executed_at: Optional[str] = None
     execution_plan: Any = None   # stores ExecutionDAG dict or legacy flat list
     task_id: Optional[int] = None
+    requires_confirmation: bool = False
+    confirmed: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -167,6 +170,7 @@ class PolicyPreviewResponse(BaseModel):
     validation: DAGValidation
     levels: List[List[str]] = []  # topological levels for frontend layout
     conflicts: List[PolicyConflict] = []
+    requires_confirmation: bool = False  # True if any node's capability is flagged sensitive
 
 
 # ─── Execution Tracking ───────────────────────────────────────────

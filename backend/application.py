@@ -26,7 +26,13 @@ def _migrate_db():
         conn.execute(text("""
             ALTER TABLE policies
                 ADD COLUMN IF NOT EXISTS repeat_interval_seconds INTEGER,
-                ADD COLUMN IF NOT EXISTS last_executed_at VARCHAR
+                ADD COLUMN IF NOT EXISTS last_executed_at VARCHAR,
+                ADD COLUMN IF NOT EXISTS requires_confirmation BOOLEAN DEFAULT FALSE,
+                ADD COLUMN IF NOT EXISTS confirmed BOOLEAN DEFAULT FALSE
+        """))
+        conn.execute(text("""
+            ALTER TABLE capabilities
+                ADD COLUMN IF NOT EXISTS sensitive BOOLEAN DEFAULT FALSE
         """))
         conn.commit()
 
@@ -50,6 +56,27 @@ def _policy_has_sse_nodes(policy: models.Policy, db: Session) -> bool:
 
     return any(
         cap_method.get((n.get("device", "").lower(), n.get("capability", "").lower())) == "SSE"
+        for n in nodes
+    )
+
+
+def _policy_has_sensitive_nodes(execution_plan, db: Session) -> bool:
+    """Returns True if any node in the DAG maps to a capability flagged sensitive
+    (destructive/security-relevant) in the device catalog."""
+    plan = execution_plan
+    if not plan or not isinstance(plan, dict):
+        return False
+    nodes = plan.get("nodes", [])
+    if not nodes:
+        return False
+
+    cap_sensitive: dict = {}
+    for device in db.query(models.Device).all():
+        for cap in device.capabilities:
+            cap_sensitive[(device.name.lower(), cap.name.lower())] = bool(cap.sensitive)
+
+    return any(
+        cap_sensitive.get((n.get("device", "").lower(), n.get("capability", "").lower()), False)
         for n in nodes
     )
 
@@ -360,6 +387,7 @@ def _serialize_devices(db: Session) -> list:
                 "url": c.url,
                 "method": c.method,
                 "input_schema": c.input_schema,
+                "sensitive": bool(c.sensitive),
             })
         devices_data.append({
             "name": d.name,
@@ -543,12 +571,17 @@ def preview_policy(policy: schemas.PolicyCreate, db: Session = Depends(get_db)):
             parsed.execution_dag, parsed.time_window, db,
         )
 
+        requires_confirmation = _policy_has_sensitive_nodes(
+            dag_utils.dag_to_dict(parsed.execution_dag), db
+        )
+
         return schemas.PolicyPreviewResponse(
             execution_dag=parsed.execution_dag,
             time_window=parsed.time_window,
             validation=validation,
             levels=levels,
             conflicts=conflict_list,
+            requires_confirmation=requires_confirmation,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -568,13 +601,15 @@ def create_policy(policy: schemas.PolicyCreate, db: Session = Depends(get_db)):
     if policy.replace_policy_ids:
         db.commit()
 
+    execution_plan = dag_utils.dag_to_dict(parsed.execution_dag)
     db_policy = models.Policy(
         name=policy.name,
         original_text=policy.original_text,
         start_time=parsed.time_window["from_time"],
         end_time=parsed.time_window["to_time"],
-        execution_plan=dag_utils.dag_to_dict(parsed.execution_dag),
+        execution_plan=execution_plan,
         repeat_interval_seconds=policy.repeat_interval_seconds,
+        requires_confirmation=_policy_has_sensitive_nodes(execution_plan, db),
     )
 
     db.add(db_policy)
@@ -595,6 +630,21 @@ def delete_policy(policy_id: int, db: Session = Depends(get_db)):
     db.delete(policy)
     db.commit()
     return {"detail": "Policy deleted"}
+
+@application.post("/api/policies/{policy_id}/confirm", response_model=schemas.Policy)
+def confirm_policy(policy_id: int, db: Session = Depends(get_db)):
+    """
+    Arm a policy that contains sensitive (destructive/security-relevant) actions.
+    Required once before the policy can execute via scheduler, SSE trigger, or
+    manual run -- after this it fires unattended like any other policy.
+    """
+    policy = db.query(models.Policy).filter(models.Policy.id == policy_id).first()
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    policy.confirmed = True
+    db.commit()
+    db.refresh(policy)
+    return policy
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -643,6 +693,7 @@ def create_task(task: schemas.TaskCreate, db: Session = Depends(get_db)):
                 end_time=time_window.get("to_time", "23:59"),
                 execution_plan=execution_plan,
                 task_id=db_task.id,
+                requires_confirmation=_policy_has_sensitive_nodes(execution_plan, db),
             ))
         except Exception as e:
             print(f"Failed to create policy for rule '{rule}': {e}")

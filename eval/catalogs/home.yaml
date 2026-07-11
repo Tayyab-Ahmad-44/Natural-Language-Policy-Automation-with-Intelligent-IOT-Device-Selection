@@ -98,6 +98,7 @@ devices:
         url: http://home/front/unlock
         method: POST
         input_schema: {code: string}
+        sensitive: true
       - name: Status
         url: http://home/front/status
         method: GET
@@ -110,6 +111,7 @@ devices:
         url: http://home/garage/open
         method: POST
         input_schema: {}
+        sensitive: true
       - name: Close
         url: http://home/garage/close
         method: POST
@@ -122,6 +124,7 @@ devices:
         url: http://home/cam/record
         method: POST
         input_schema: {duration: integer}
+        sensitive: true
       - name: Pan
         url: http://home/cam/pan
         method: POST
@@ -130,6 +133,7 @@ devices:
         url: http://home/cam/snap
         method: POST
         input_schema: {}
+        sensitive: true
       - name: Analyze Scene
         url: http://home/cam/snap
         method: VLM

@@ -18,7 +18,8 @@ class Capability(Base):
     url = Column(String)
     method = Column(String) # GET, POST, etc.
     input_schema = Column(JSON) # The expected JSON structure
-    
+    sensitive = Column(Boolean, default=False)  # destructive/security-relevant — gates policy execution behind confirmation
+
     device_id = Column(Integer, ForeignKey('devices.id'))
     device = relationship("Device", back_populates="capabilities")
 
@@ -52,6 +53,12 @@ class Policy(Base):
     is_active = Column(Boolean, default=True)
     repeat_interval_seconds = Column(Integer, nullable=True)  # None = run once per window entry
     last_executed_at = Column(String, nullable=True)           # ISO timestamp of last scheduler run
+
+    # Set at save time if the DAG contains any sensitive-capability node. Execution
+    # (scheduler/SSE/manual) is blocked until a human explicitly confirms once via
+    # POST /api/policies/{id}/confirm -- after that it runs unattended like any policy.
+    requires_confirmation = Column(Boolean, default=False)
+    confirmed = Column(Boolean, default=False)
 
     # Store the execution plan as DAG JSON: {"nodes": [...]}
     # Also supports legacy flat list format (auto-migrated at runtime)

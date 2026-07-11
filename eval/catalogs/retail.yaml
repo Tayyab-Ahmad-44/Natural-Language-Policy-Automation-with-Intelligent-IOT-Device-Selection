@@ -7,6 +7,7 @@ devices:
         url: http://store/door/unlock
         method: POST
         input_schema: {}
+        sensitive: true
       - name: Lock
         url: http://store/door/lock
         method: POST
@@ -55,10 +56,12 @@ devices:
         url: http://store/alarm/disarm
         method: POST
         input_schema: {code: string}
+        sensitive: true
       - name: Bypass Zone
         url: http://store/alarm/bypass
         method: POST
         input_schema: {zone: integer}
+        sensitive: true
 
   - name: POS Register
     type: Computer
@@ -71,6 +74,7 @@ devices:
         url: http://store/pos/update
         method: POST
         input_schema: {}
+        sensitive: true
       - name: Gen Report
         url: http://store/pos/report
         method: POST
@@ -99,6 +103,7 @@ devices:
         url: http://store/shelf/price
         method: POST
         input_schema: {amount: float}
+        sensitive: true
 
   - name: Fitting Room Light
     type: Light
