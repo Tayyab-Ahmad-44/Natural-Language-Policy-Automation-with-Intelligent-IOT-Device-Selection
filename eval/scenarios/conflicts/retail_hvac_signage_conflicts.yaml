@@ -1,0 +1,54 @@
+id: retail_hvac_signage_conflicts
+new_policy:
+  name: Cool Mode for Opening
+  text: "Set HVAC to cool mode 08:30-21:00."
+  window: {from_time: "08:30", to_time: "21:00"}
+  actions:
+    - {device: HVAC, capability: Set Mode, args: {mode: cool}}
+candidates:
+  # Same capability, DIFFERENT values ("cool" vs "eco") on an overlapping
+  # window -- the prompt's own contradiction definition explicitly covers
+  # "both set the same property to DIFFERENT values". NOTE: the rule-based
+  # fallback (_rule_conflict) only compares capability-name polarity, not
+  # args, and "Set Mode" isn't a recognized activate/deactivate keyword --
+  # so use_llm=False is expected to mislabel this as "overlap". That's a
+  # known, honest limitation of the fallback, not a scorer bug; this
+  # candidate is deliberately here to make that gap visible in the report
+  # rather than hide it.
+  - name: Eco Mode Closing Override
+    text: "Set HVAC to eco mode 20:30-21:30."
+    window: {from_time: "20:30", to_time: "21:30"}
+    actions:
+      - {device: HVAC, capability: Set Mode, args: {mode: eco}}
+    expected_type: contradiction
+
+  - name: Duplicate Cool Setting
+    text: "Set HVAC to cool mode 09:00-10:00."
+    window: {from_time: "09:00", to_time: "10:00"}
+    actions:
+      - {device: HVAC, capability: Set Mode, args: {mode: cool}}
+    expected_type: redundancy
+
+  # Different capability on the same device, but complementary rather than
+  # competing (this exact pairing appears together in the DAG seed set's
+  # retail_store_opening scenario) -- clearly compatible.
+  - name: Temp Fine-tune
+    text: "Set HVAC temp to 21 degrees, 08:30-21:00."
+    window: {from_time: "08:30", to_time: "21:00"}
+    actions:
+      - {device: HVAC, capability: Set Temp, args: {temp: 21}}
+    expected_type: none
+
+  - name: Signage Lunch Promo
+    text: "Update digital signage content at noon."
+    window: {from_time: "12:00", to_time: "12:00"}
+    actions:
+      - {device: Digital Signage, capability: Set Content, args: {id: LUNCH_SPECIAL}}
+    expected_type: none
+
+  - name: Music Volume Evening
+    text: "Lower background music volume 20:00-21:00."
+    window: {from_time: "20:00", to_time: "21:00"}
+    actions:
+      - {device: Background Music, capability: Set Volume, args: {level: 20}}
+    expected_type: none

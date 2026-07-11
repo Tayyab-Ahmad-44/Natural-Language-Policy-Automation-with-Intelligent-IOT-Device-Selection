@@ -1,0 +1,40 @@
+# Source: comprehensive_scenarios.md, Industrial Manufacturing task 1
+# "Emergency Shutdown". Pure fan-out, no runtime conditions — contrasts with
+# home_parallel_party_mode on failure-mode semantics: every node here is
+# safety-critical (halt_branch) per llm.py's DAG_SCHEMA_INSTRUCTIONS rule
+# ("emergency/safety policies -> halt_branch"), vs. that scenario's ambient
+# "ignore" nodes. Good for testing failure-mode-accuracy discrimination.
+id: factory_emergency_shutdown
+nl: "Immediately perform an emergency stop on the hydraulic press, stop the conveyor belt, trigger the emergency siren at 'critical' level, and flash the warning light red for 120 seconds."
+tags: [multi_node, parallel]
+catalog: factory
+expected_dag:
+  nodes:
+    - id: n1
+      device: Hydraulic Press
+      capability: Emergency Stop
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch
+    - id: n2
+      device: Conveyor Belt
+      capability: Stop
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch
+    - id: n3
+      device: Emergency Siren
+      capability: Alert
+      args: {level: critical}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch
+    - id: n4
+      device: Warning Light
+      capability: Flash
+      args: {color: red, duration: 120}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch

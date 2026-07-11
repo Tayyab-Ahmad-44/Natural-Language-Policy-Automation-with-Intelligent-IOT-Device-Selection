@@ -15,6 +15,7 @@ device in contradictory (or redundant) ways.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 import dag_utils
@@ -85,11 +86,14 @@ _DEACTIVATE = {
 
 def _polarity(capability: str) -> Optional[str]:
     c = (capability or "").lower()
+    # Word-boundary-aware matching: naive substring containment previously
+    # matched "lock" inside "unlock" (and "arm" inside "alarm"), silently
+    # treating opposite -- or unrelated -- capabilities as the same polarity.
     for kw in _DEACTIVATE:
-        if kw in c:
+        if re.search(rf"\b{re.escape(kw)}\b", c):
             return "deactivate"
     for kw in _ACTIVATE:
-        if kw in c:
+        if re.search(rf"\b{re.escape(kw)}\b", c):
             return "activate"
     # bare on/off as whole tokens
     tokens = set(c.replace("_", " ").replace("-", " ").split())

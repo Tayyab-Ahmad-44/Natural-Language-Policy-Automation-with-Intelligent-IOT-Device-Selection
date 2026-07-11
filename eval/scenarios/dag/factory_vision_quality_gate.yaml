@@ -1,0 +1,50 @@
+# Source: comprehensive_scenarios.md, Industrial Manufacturing task 4
+# "Vision Quality Gate". Three-way fan-out off a single VLM source node
+# (vs. home_vlm_fire_safety's two-way) — tests condition matching where
+# multiple aligned nodes all reference the same source_node_id.
+id: factory_vision_quality_gate
+nl: "If the quality camera detects a defect or misalignment, stop the conveyor belt, alert the emergency siren at warning level, and flash the warning light yellow for 30 seconds."
+tags: [multi_node, conditional]
+catalog: factory
+expected_dag:
+  nodes:
+    - id: n1
+      device: Quality Camera
+      capability: Analyze Defects
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch
+    - id: n2
+      device: Conveyor Belt
+      capability: Stop
+      args: {}
+      dependencies: [n1]
+      condition:
+        type: all
+        conditions:
+          - {type: on_value, source_node_id: n1, field: detected, operator: "==", value: true}
+          - {type: on_value, source_node_id: n1, field: confidence, operator: ">=", value: 0.7}
+      on_failure: ignore
+    - id: n3
+      device: Emergency Siren
+      capability: Alert
+      args: {level: warning}
+      dependencies: [n1]
+      condition:
+        type: all
+        conditions:
+          - {type: on_value, source_node_id: n1, field: detected, operator: "==", value: true}
+          - {type: on_value, source_node_id: n1, field: confidence, operator: ">=", value: 0.7}
+      on_failure: ignore
+    - id: n4
+      device: Warning Light
+      capability: Flash
+      args: {color: yellow, duration: 30}
+      dependencies: [n1]
+      condition:
+        type: all
+        conditions:
+          - {type: on_value, source_node_id: n1, field: detected, operator: "==", value: true}
+          - {type: on_value, source_node_id: n1, field: confidence, operator: ">=", value: 0.7}
+      on_failure: ignore

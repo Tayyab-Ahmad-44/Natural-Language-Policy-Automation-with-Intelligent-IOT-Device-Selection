@@ -1,0 +1,50 @@
+id: factory_conveyor_conflicts
+new_policy:
+  name: Line Restart
+  text: "Start the conveyor belt at 08:00."
+  window: {from_time: "08:00", to_time: "08:00"}
+  actions:
+    - {device: Conveyor Belt, capability: Start, args: {speed: 50}}
+candidates:
+  - name: Maintenance Halt
+    text: "Stop the conveyor belt at 08:00 for inspection."
+    window: {from_time: "08:00", to_time: "08:00"}
+    actions:
+      - {device: Conveyor Belt, capability: Stop, args: {}}
+    expected_type: contradiction
+
+  - name: Duplicate Startup Rule
+    text: "Start the conveyor belt 07:45-08:15."
+    window: {from_time: "07:45", to_time: "08:15"}
+    actions:
+      - {device: Conveyor Belt, capability: Start, args: {speed: 60}}
+    expected_type: redundancy
+
+  # "Reverse" isn't a recognized activate/deactivate keyword either side --
+  # genuinely ambiguous relative to "Start" without more context. This is
+  # also the case where the rule-based fallback's keyword-polarity check
+  # can't find a contradiction (old_pol is None for "Reverse") and falls
+  # through to its own "overlap" default -- so gold and rule-fallback agree
+  # here, unlike the Set-Mode-value case in retail_hvac_signage_conflicts.
+  - name: Direction Flip Test
+    text: "Briefly reverse the conveyor belt at 08:00."
+    window: {from_time: "08:00", to_time: "08:00"}
+    actions:
+      - {device: Conveyor Belt, capability: Reverse, args: {}}
+    expected_type: overlap
+
+  - name: Cooling Fan Boost
+    text: "Set the cooling fan speed at 08:00."
+    window: {from_time: "08:00", to_time: "08:00"}
+    actions:
+      - {device: Cooling Fan, capability: Set Speed, args: {rpm: 1500}}
+    expected_type: none
+
+  # Different device AND non-overlapping time -- a double-negative pre-filter
+  # distractor.
+  - name: Afternoon Arm Move
+    text: "Move the robotic arm at 14:00."
+    window: {from_time: "14:00", to_time: "14:00"}
+    actions:
+      - {device: Robotic Arm, capability: Move To, args: {x: 0, y: 0, z: 0}}
+    expected_type: none

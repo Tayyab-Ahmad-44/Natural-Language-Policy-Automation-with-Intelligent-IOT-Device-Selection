@@ -1,0 +1,113 @@
+# Smart Retail device catalog — transcribed from comprehensive_scenarios.md section 5.
+devices:
+  - name: Main Entrance
+    type: Door
+    capabilities:
+      - name: Unlock
+        url: http://store/door/unlock
+        method: POST
+        input_schema: {}
+      - name: Lock
+        url: http://store/door/lock
+        method: POST
+        input_schema: {}
+      - name: Auto Mode
+        url: http://store/door/auto
+        method: POST
+        input_schema: {}
+
+  - name: Digital Signage
+    type: Display
+    capabilities:
+      - name: Set Content
+        url: http://store/sign/content
+        method: POST
+        input_schema: {id: string}
+      - name: Set Brightness
+        url: http://store/sign/bright
+        method: POST
+        input_schema: {level: integer}
+      - name: Schedule
+        url: http://store/sign/schedule
+        method: POST
+        input_schema: {playlist: string}
+
+  - name: HVAC
+    type: Climate
+    capabilities:
+      - name: Set Mode
+        url: http://store/hvac/mode
+        method: POST
+        input_schema: {mode: string}
+      - name: Set Temp
+        url: http://store/hvac/set
+        method: POST
+        input_schema: {temp: float}
+
+  - name: Security Grid
+    type: Alarm
+    capabilities:
+      - name: Arm
+        url: http://store/alarm/arm
+        method: POST
+        input_schema: {code: string}
+      - name: Disarm
+        url: http://store/alarm/disarm
+        method: POST
+        input_schema: {code: string}
+      - name: Bypass Zone
+        url: http://store/alarm/bypass
+        method: POST
+        input_schema: {zone: integer}
+
+  - name: POS Register
+    type: Computer
+    capabilities:
+      - name: Reboot
+        url: http://store/pos/reboot
+        method: POST
+        input_schema: {}
+      - name: Update
+        url: http://store/pos/update
+        method: POST
+        input_schema: {}
+      - name: Gen Report
+        url: http://store/pos/report
+        method: POST
+        input_schema: {type: string}
+
+  - name: Background Music
+    type: Audio
+    capabilities:
+      - name: Play
+        url: http://store/music/play
+        method: POST
+        input_schema: {genre: string}
+      - name: Set Volume
+        url: http://store/music/volume
+        method: POST
+        input_schema: {level: integer}
+
+  - name: Smart Shelf
+    type: Sensor
+    capabilities:
+      - name: Check Stock
+        url: http://store/shelf/stock
+        method: GET
+        input_schema: {}
+      - name: Update Price
+        url: http://store/shelf/price
+        method: POST
+        input_schema: {amount: float}
+
+  - name: Fitting Room Light
+    type: Light
+    capabilities:
+      - name: Set Status
+        url: http://store/fitting/status
+        method: POST
+        input_schema: {state: "string (vacant/occupied)"}
+      - name: Cleaning Mode
+        url: http://store/fitting/clean
+        method: POST
+        input_schema: {}

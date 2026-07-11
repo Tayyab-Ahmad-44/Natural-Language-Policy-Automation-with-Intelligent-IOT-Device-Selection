@@ -1,0 +1,16 @@
+# Hand-authored (not from comprehensive_scenarios.md): a minimal single-action
+# scenario. Needed as a seed edge case for the scorer's alignment logic, since
+# every task in the source doc has 3+ actions.
+id: home_single_node_light_off
+nl: "Turn off the living room light."
+tags: [single_node]
+catalog: home
+expected_dag:
+  nodes:
+    - id: n1
+      device: Living Room Light
+      capability: Turn Off
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: ignore

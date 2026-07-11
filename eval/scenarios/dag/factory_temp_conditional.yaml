@@ -1,0 +1,31 @@
+# Source: llm.py DAG_EXAMPLES, EXAMPLE 2 verbatim — this is a policy the LLM
+# has literally been shown as a few-shot example, so it doubles as a sanity
+# check on the harness itself (if the pipeline can't score ~100% here,
+# something is wrong with the scorer, not the LLM).
+id: factory_temp_conditional
+nl: "Read the temperature sensor, if it exceeds 30 degrees then activate the cooling fan at 2000 RPM and flash the warning light yellow for 30 seconds."
+tags: [multi_node, conditional]
+catalog: factory
+expected_dag:
+  nodes:
+    - id: n1
+      device: Temp Sensor
+      capability: Read
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch
+    - id: n2
+      device: Cooling Fan
+      capability: Set Speed
+      args: {rpm: 2000}
+      dependencies: [n1]
+      condition: {type: on_value, source_node_id: n1, field: temp, operator: ">", value: 30}
+      on_failure: ignore
+    - id: n3
+      device: Warning Light
+      capability: Flash
+      args: {color: yellow, duration: 30}
+      dependencies: [n1]
+      condition: {type: on_value, source_node_id: n1, field: temp, operator: ">", value: 30}
+      on_failure: ignore

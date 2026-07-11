@@ -1,0 +1,117 @@
+# Smart Agriculture device catalog — transcribed from comprehensive_scenarios.md section 4.
+devices:
+  - name: Sprinkler Valve A
+    type: Valve
+    capabilities:
+      - name: Open
+        url: http://farm/sprinkler/open
+        method: POST
+        input_schema: {duration: integer}
+      - name: Close
+        url: http://farm/sprinkler/close
+        method: POST
+        input_schema: {}
+
+  - name: Soil Sensor
+    type: Sensor
+    capabilities:
+      - name: Read Moisture
+        url: http://farm/sensor/moisture
+        method: GET
+        input_schema: {}
+      - name: Read pH
+        url: http://farm/sensor/ph
+        method: GET
+        input_schema: {}
+      - name: Read Temp
+        url: http://farm/sensor/temp
+        method: GET
+        input_schema: {}
+
+  - name: Greenhouse Roof
+    type: Motor
+    capabilities:
+      - name: Open
+        url: http://farm/roof/open
+        method: POST
+        input_schema: {percentage: integer}
+      - name: Close
+        url: http://farm/roof/close
+        method: POST
+        input_schema: {}
+
+  - name: Fertilizer Pump
+    type: Pump
+    capabilities:
+      - name: Inject
+        url: http://farm/fert/inject
+        method: POST
+        input_schema: {liters: float}
+      - name: Mix
+        url: http://farm/fert/mix
+        method: POST
+        input_schema: {minutes: integer}
+      - name: Stop
+        url: http://farm/fert/stop
+        method: POST
+        input_schema: {}
+
+  - name: Grow Lights
+    type: Light
+    capabilities:
+      - name: Turn On
+        url: http://farm/lights/on
+        method: POST
+        input_schema: {}
+      - name: Turn Off
+        url: http://farm/lights/off
+        method: POST
+        input_schema: {}
+      - name: Set Spectrum
+        url: http://farm/lights/spectrum
+        method: POST
+        input_schema: {type: "string (veg/bloom)"}
+
+  - name: Drone
+    type: UAV
+    capabilities:
+      - name: Patrol
+        url: http://farm/drone/patrol
+        method: POST
+        input_schema: {path_id: string}
+      - name: Spray
+        url: http://farm/drone/spray
+        method: POST
+        input_schema: {area_id: string}
+      - name: Return
+        url: http://farm/drone/home
+        method: POST
+        input_schema: {}
+
+  - name: Weather Station
+    type: Sensor
+    capabilities:
+      - name: Read Rain
+        url: http://farm/weather/rain
+        method: GET
+        input_schema: {}
+      - name: Read Wind
+        url: http://farm/weather/wind
+        method: GET
+        input_schema: {}
+
+  - name: Heater
+    type: Heater
+    capabilities:
+      - name: Turn On
+        url: http://farm/heater/on
+        method: POST
+        input_schema: {}
+      - name: Turn Off
+        url: http://farm/heater/off
+        method: POST
+        input_schema: {}
+      - name: Set Temp
+        url: http://farm/heater/set
+        method: POST
+        input_schema: {temp: float}

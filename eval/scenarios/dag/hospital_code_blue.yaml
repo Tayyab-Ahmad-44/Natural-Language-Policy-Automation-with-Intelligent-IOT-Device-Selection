@@ -1,0 +1,40 @@
+# Source: comprehensive_scenarios.md, Smart Hospital task 2 "Code Blue (Emergency)".
+#
+# ASSUMPTION: "turn on room lights to 100%" is graded as a single Dim{100}
+# node rather than Turn On, since Room Lights only exposes Turn On/Turn
+# Off/Dim (no "on to X%" capability) and Dim{100} is the only mapping that
+# preserves the "100%" detail as a checkable arg.
+id: hospital_code_blue
+nl: "Immediately turn on room lights to 100%, emergency open the door, set bed height to 50cm, and alert nurse call with 'critical' priority."
+tags: [multi_node, parallel]
+catalog: hospital
+expected_dag:
+  nodes:
+    - id: n1
+      device: Room Lights
+      capability: Dim
+      args: {percentage: 100}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch
+    - id: n2
+      device: Door Access
+      capability: Emergency Open
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch
+    - id: n3
+      device: Patient Bed
+      capability: Set Height
+      args: {cm: 50}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch
+    - id: n4
+      device: Nurse Call
+      capability: Alert
+      args: {priority: critical}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch

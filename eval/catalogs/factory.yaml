@@ -1,0 +1,117 @@
+# Industrial Manufacturing device catalog — transcribed from comprehensive_scenarios.md section 2.
+devices:
+  - name: Hydraulic Press
+    type: Machinery
+    capabilities:
+      - name: Start
+        url: http://factory/press/start
+        method: POST
+        input_schema: {pressure: integer}
+      - name: Stop
+        url: http://factory/press/stop
+        method: POST
+        input_schema: {}
+      - name: Emergency Stop
+        url: http://factory/press/estop
+        method: POST
+        input_schema: {}
+
+  - name: Cooling Fan
+    type: Fan
+    capabilities:
+      - name: Set Speed
+        url: http://factory/fan/set
+        method: POST
+        input_schema: {rpm: integer}
+      - name: Oscillate
+        url: http://factory/fan/oscillate
+        method: POST
+        input_schema: {enabled: boolean}
+
+  - name: Temp Sensor
+    type: Sensor
+    capabilities:
+      - name: Read
+        url: http://factory/sensor/temp
+        method: GET
+        input_schema: {}
+      - name: Calibrate
+        url: http://factory/sensor/calibrate
+        method: POST
+        input_schema: {}
+
+  - name: Warning Light
+    type: Light
+    capabilities:
+      - name: Flash
+        url: http://factory/light/flash
+        method: POST
+        input_schema: {color: string, duration: integer}
+      - name: Solid
+        url: http://factory/light/solid
+        method: POST
+        input_schema: {color: string}
+      - name: Off
+        url: http://factory/light/off
+        method: POST
+        input_schema: {}
+
+  - name: Conveyor Belt
+    type: Motor
+    capabilities:
+      - name: Start
+        url: http://factory/conveyor/start
+        method: POST
+        input_schema: {speed: integer}
+      - name: Stop
+        url: http://factory/conveyor/stop
+        method: POST
+        input_schema: {}
+      - name: Reverse
+        url: http://factory/conveyor/reverse
+        method: POST
+        input_schema: {}
+
+  - name: Robotic Arm
+    type: Robot
+    capabilities:
+      - name: Move To
+        url: http://factory/arm/move
+        method: POST
+        input_schema: {x: float, y: float, z: float}
+      - name: Grip
+        url: http://factory/arm/grip
+        method: POST
+        input_schema: {force: integer}
+      - name: Release
+        url: http://factory/arm/release
+        method: POST
+        input_schema: {}
+
+  - name: Emergency Siren
+    type: Alarm
+    capabilities:
+      - name: Alert
+        url: http://factory/siren/alert
+        method: POST
+        input_schema: {level: string}
+      - name: Silence
+        url: http://factory/siren/silence
+        method: POST
+        input_schema: {}
+
+  - name: Quality Camera
+    type: Camera
+    capabilities:
+      - name: Inspect
+        url: http://factory/cam/inspect
+        method: POST
+        input_schema: {mode: string}
+      - name: Zoom
+        url: http://factory/cam/zoom
+        method: POST
+        input_schema: {level: float}
+      - name: Analyze Defects
+        url: http://factory/cam/inspect
+        method: VLM
+        input_schema: {prompt: string, target_labels: [defect, crack, misalignment], source_method: POST, capture_args: {mode: visual}}

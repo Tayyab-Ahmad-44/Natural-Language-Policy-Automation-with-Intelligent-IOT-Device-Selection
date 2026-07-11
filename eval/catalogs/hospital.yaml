@@ -1,0 +1,117 @@
+# Smart Hospital device catalog — transcribed from comprehensive_scenarios.md section 3.
+devices:
+  - name: Patient Bed
+    type: Medical Bed
+    capabilities:
+      - name: Adjust Head
+        url: http://hospital/bed/head
+        method: POST
+        input_schema: {angle: integer}
+      - name: Adjust Feet
+        url: http://hospital/bed/feet
+        method: POST
+        input_schema: {angle: integer}
+      - name: Set Height
+        url: http://hospital/bed/height
+        method: POST
+        input_schema: {cm: integer}
+
+  - name: IV Drip
+    type: Medical Pump
+    capabilities:
+      - name: Set Rate
+        url: http://hospital/iv/set
+        method: POST
+        input_schema: {ml_per_hour: float}
+      - name: Stop
+        url: http://hospital/iv/stop
+        method: POST
+        input_schema: {}
+      - name: Reset Alarm
+        url: http://hospital/iv/reset
+        method: POST
+        input_schema: {}
+
+  - name: Room Lights
+    type: Light
+    capabilities:
+      - name: Turn On
+        url: http://hospital/lights/on
+        method: POST
+        input_schema: {}
+      - name: Turn Off
+        url: http://hospital/lights/off
+        method: POST
+        input_schema: {}
+      - name: Dim
+        url: http://hospital/lights/dim
+        method: POST
+        input_schema: {percentage: integer}
+
+  - name: Nurse Call
+    type: Alarm
+    capabilities:
+      - name: Alert
+        url: http://hospital/call/alert
+        method: POST
+        input_schema: {priority: string}
+      - name: Cancel
+        url: http://hospital/call/cancel
+        method: POST
+        input_schema: {}
+
+  - name: Vital Monitor
+    type: Monitor
+    capabilities:
+      - name: Measure BP
+        url: http://hospital/monitor/bp
+        method: POST
+        input_schema: {}
+      - name: Measure HR
+        url: http://hospital/monitor/hr
+        method: POST
+        input_schema: {}
+      - name: Measure O2
+        url: http://hospital/monitor/o2
+        method: POST
+        input_schema: {}
+
+  - name: HVAC
+    type: Climate
+    capabilities:
+      - name: Set Temp
+        url: http://hospital/hvac/set
+        method: POST
+        input_schema: {temp: float}
+      - name: Filter Mode
+        url: http://hospital/hvac/filter
+        method: POST
+        input_schema: {mode: "string (hepa/std)"}
+
+  - name: Door Access
+    type: Lock
+    capabilities:
+      - name: Lock
+        url: http://hospital/door/lock
+        method: POST
+        input_schema: {}
+      - name: Unlock
+        url: http://hospital/door/unlock
+        method: POST
+        input_schema: {badge: string}
+      - name: Emergency Open
+        url: http://hospital/door/open
+        method: POST
+        input_schema: {}
+
+  - name: Sanitizer Dispenser
+    type: Dispenser
+    capabilities:
+      - name: Dispense
+        url: http://hospital/sanitizer/dispense
+        method: POST
+        input_schema: {amount: integer}
+      - name: Check Level
+        url: http://hospital/sanitizer/level
+        method: GET
+        input_schema: {}

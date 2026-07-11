@@ -8,3 +8,4 @@ backend/__pycache__/
 frontend/node_modules/
 thesis/
 .claude/
+eval/reports/

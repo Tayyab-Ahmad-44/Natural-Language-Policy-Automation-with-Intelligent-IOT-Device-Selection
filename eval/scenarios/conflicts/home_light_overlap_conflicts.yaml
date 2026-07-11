@@ -1,0 +1,44 @@
+id: home_light_overlap_conflicts
+new_policy:
+  name: Party Color Wash
+  text: "Set living room light to purple from 20:00 to 23:00."
+  window: {from_time: "20:00", to_time: "23:00"}
+  actions:
+    - {device: Living Room Light, capability: Set Color, args: {hex: "#800080"}}
+candidates:
+  # Different property on the same device (color vs brightness), neither
+  # opposing nor identical -- a genuinely ambiguous case an automated judge
+  # can't confidently resolve without more context. Textbook "overlap".
+  - name: Dim for Ambience
+    text: "Dim living room light to 60%, 20:00-23:00."
+    window: {from_time: "20:00", to_time: "23:00"}
+    actions:
+      - {device: Living Room Light, capability: Dim, args: {percentage: 60}}
+    expected_type: overlap
+
+  - name: Duplicate Color Rule
+    text: "Set living room light to purple 20:30-21:30 for guests."
+    window: {from_time: "20:30", to_time: "21:30"}
+    actions:
+      - {device: Living Room Light, capability: Set Color, args: {hex: "#800080"}}
+    expected_type: redundancy
+
+  # windows_overlap() is inclusive, so a window that only touches at the
+  # boundary (23:00-23:30 against 20:00-23:00) still counts as overlapping --
+  # this candidate exercises that boundary case specifically. A light that's
+  # off can't simultaneously be displaying a color, so this is a genuine
+  # contradiction despite "Turn Off" and "Set Color" not being
+  # rule-fallback-recognized opposites.
+  - name: Lights Off After Party
+    text: "Turn off living room light 23:00-23:30."
+    window: {from_time: "23:00", to_time: "23:30"}
+    actions:
+      - {device: Living Room Light, capability: Turn Off, args: {}}
+    expected_type: contradiction
+
+  - name: Camera Snapshot Log
+    text: "Take a camera snapshot every hour, all day."
+    window: {from_time: "00:00", to_time: "23:59"}
+    actions:
+      - {device: Security Camera, capability: Snapshot, args: {}}
+    expected_type: none

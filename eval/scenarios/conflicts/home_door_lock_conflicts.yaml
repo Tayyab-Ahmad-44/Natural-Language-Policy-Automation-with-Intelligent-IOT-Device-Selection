@@ -1,0 +1,48 @@
+id: home_door_lock_conflicts
+new_policy:
+  name: Evening Unlock for Delivery
+  text: "Unlock the front door from 18:00 to 18:30 for a delivery."
+  window: {from_time: "18:00", to_time: "18:30"}
+  actions:
+    - {device: Front Door Lock, capability: Unlock, args: {code: "1234"}}
+candidates:
+  # Lock vs Unlock, same device, overlapping window -> clean contradiction.
+  - name: Night Security Lockdown
+    text: "Lock the front door every night from 18:00 to 23:00."
+    window: {from_time: "18:00", to_time: "23:00"}
+    actions:
+      - {device: Front Door Lock, capability: Lock, args: {}}
+    expected_type: contradiction
+
+  # Same device + same capability, overlapping window -> redundancy.
+  - name: Backup Unlock Reminder
+    text: "Unlock front door 18:15-18:45 as a backup reminder."
+    window: {from_time: "18:15", to_time: "18:45"}
+    actions:
+      - {device: Front Door Lock, capability: Unlock, args: {code: "5678"}}
+    expected_type: redundancy
+
+  # Same device, overlapping window, but a read-only status check -- passes
+  # the pre-filter (shared device + time overlap) but is clearly compatible.
+  - name: Front Door Status Ping
+    text: "Check front door status every 15 minutes, all day."
+    window: {from_time: "00:00", to_time: "23:59"}
+    actions:
+      - {device: Front Door Lock, capability: Status, args: {}}
+    expected_type: none
+
+  # Different device entirely -> pre-filter drops this before classification.
+  - name: Garage Auto Close Evening
+    text: "Close the garage door from 18:00 to 18:30."
+    window: {from_time: "18:00", to_time: "18:30"}
+    actions:
+      - {device: Garage Door, capability: Close, args: {}}
+    expected_type: none
+
+  # Same device + same capability, but NO time overlap -> pre-filter drops.
+  - name: Morning Unlock Routine
+    text: "Unlock front door 06:00-08:00 for deliveries."
+    window: {from_time: "06:00", to_time: "08:00"}
+    actions:
+      - {device: Front Door Lock, capability: Unlock, args: {code: "0000"}}
+    expected_type: none

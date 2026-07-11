@@ -1,0 +1,57 @@
+# Source: comprehensive_scenarios.md, Smart Retail task 1 "Store Opening
+# Routine". The largest/most structurally complex seed scenario (6 nodes, 3
+# roots, 3 same-device sequential pairs) — a stress test for the aligner.
+#
+# ASSUMPTION: "disarm ... unlock main entrance" is graded as a real dependency
+# (unlock waits on disarm succeeding) rather than two independent actions,
+# since unlocking a still-armed entrance would trip the alarm — this is the
+# kind of causal link llm.py's own rules ("B should happen AFTER A") call for,
+# even though the NL doesn't use an explicit "then".
+id: retail_store_opening
+nl: "At 08:30, disarm security grid with code '1234', unlock main entrance, set HVAC to 'cool' mode at 21 degrees, and play 'Pop' music at volume 40."
+tags: [multi_node, parallel, scheduled]
+catalog: retail
+expected_dag:
+  nodes:
+    - id: n1
+      device: Security Grid
+      capability: Disarm
+      args: {code: "1234"}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch
+    - id: n2
+      device: Main Entrance
+      capability: Unlock
+      args: {}
+      dependencies: [n1]
+      condition: {type: on_success}
+      on_failure: ignore
+    - id: n3
+      device: HVAC
+      capability: Set Mode
+      args: {mode: cool}
+      dependencies: []
+      condition: null
+      on_failure: ignore
+    - id: n4
+      device: HVAC
+      capability: Set Temp
+      args: {temp: 21}
+      dependencies: [n3]
+      condition: {type: on_success}
+      on_failure: ignore
+    - id: n5
+      device: Background Music
+      capability: Play
+      args: {genre: Pop}
+      dependencies: []
+      condition: null
+      on_failure: ignore
+    - id: n6
+      device: Background Music
+      capability: Set Volume
+      args: {level: 40}
+      dependencies: [n5]
+      condition: {type: on_success}
+      on_failure: ignore

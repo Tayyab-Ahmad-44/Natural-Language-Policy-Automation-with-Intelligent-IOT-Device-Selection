@@ -1,0 +1,38 @@
+# Source: comprehensive_scenarios.md, Smart Home task 2 "Night Security".
+# Mirrors llm.py's own EXAMPLE 3 (mixed parallel + sequential): the lock is
+# safety-critical (halt_branch) and gates the camera recording; the other two
+# actions are independent and non-critical (ignore).
+id: home_night_security
+nl: "At 11:00 PM, lock the front door, close the garage door, turn off the living room light, and set the security camera to record for 60 seconds."
+tags: [multi_node, parallel, scheduled]
+catalog: home
+expected_dag:
+  nodes:
+    - id: n1
+      device: Front Door Lock
+      capability: Lock
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch
+    - id: n2
+      device: Garage Door
+      capability: Close
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: skip_dependents
+    - id: n3
+      device: Security Camera
+      capability: Record
+      args: {duration: 60}
+      dependencies: [n1]
+      condition: {type: on_success}
+      on_failure: ignore
+    - id: n4
+      device: Living Room Light
+      capability: Turn Off
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: ignore

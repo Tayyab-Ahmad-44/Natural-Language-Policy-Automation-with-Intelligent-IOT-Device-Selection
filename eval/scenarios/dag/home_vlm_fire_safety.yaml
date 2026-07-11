@@ -1,0 +1,44 @@
+# Source: comprehensive_scenarios.md, Smart Home task 4 "Visual Safety Check",
+# adapted to the VLM condition pattern from llm.py's own EXAMPLE 4 (all-of
+# detected==true + confidence>=0.7 gating two downstream actions off one
+# shared VLM source node).
+#
+# ASSUMPTION: the VLM node's "args" allowlist is intentionally empty — "prompt"
+# is free NL text the model phrases itself, so it is excluded from arg scoring
+# per the agreed args-comparison rule (see grill session). Only device,
+# capability, condition and on_failure are graded for this node.
+id: home_vlm_fire_safety
+nl: "If the security camera sees smoke or fire, turn the living room light red and start recording for 60 seconds."
+tags: [multi_node, conditional]
+catalog: home
+expected_dag:
+  nodes:
+    - id: n1
+      device: Security Camera
+      capability: Analyze Scene
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: halt_branch
+    - id: n2
+      device: Living Room Light
+      capability: Set Color
+      args: {hex: "#FF0000"}
+      dependencies: [n1]
+      condition:
+        type: all
+        conditions:
+          - {type: on_value, source_node_id: n1, field: detected, operator: "==", value: true}
+          - {type: on_value, source_node_id: n1, field: confidence, operator: ">=", value: 0.7}
+      on_failure: ignore
+    - id: n3
+      device: Security Camera
+      capability: Record
+      args: {duration: 60}
+      dependencies: [n1]
+      condition:
+        type: all
+        conditions:
+          - {type: on_value, source_node_id: n1, field: detected, operator: "==", value: true}
+          - {type: on_value, source_node_id: n1, field: confidence, operator: ">=", value: 0.7}
+      on_failure: ignore

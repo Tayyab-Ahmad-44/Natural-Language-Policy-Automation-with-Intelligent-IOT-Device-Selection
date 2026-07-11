@@ -1,0 +1,56 @@
+# new_policy's window wraps midnight (21:00 -> 06:00), exercising
+# conflicts.windows_overlap()'s wrap-around interval splitting -- both a real
+# overlap case (candidate 1/2) and a genuine non-overlap case (candidate 5)
+# are included so the pre-filter's midnight handling is checked both ways,
+# not just the easy direction.
+id: hospital_iv_conflicts
+new_policy:
+  name: Night IV Rate Adjustment
+  text: "Set IV drip rate to 60ml/hr from 21:00 to 06:00."
+  window: {from_time: "21:00", to_time: "06:00"}
+  actions:
+    - {device: IV Drip, capability: Set Rate, args: {ml_per_hour: 60}}
+candidates:
+  # "Stop" halts the pump entirely while the new policy is actively driving
+  # its flow rate during the same window -- directly opposing effects on the
+  # same device, even though the rule-based keyword-polarity check can't see
+  # it (Set Rate isn't a recognized activate/deactivate keyword).
+  - name: Emergency IV Stop
+    text: "Stop the IV drip if an alarm triggers, active 21:00-06:00."
+    window: {from_time: "21:00", to_time: "06:00"}
+    actions:
+      - {device: IV Drip, capability: Stop, args: {}}
+    expected_type: contradiction
+
+  - name: Duplicate Rate Update
+    text: "Set IV drip rate to 45ml/hr, 22:00-23:00."
+    window: {from_time: "22:00", to_time: "23:00"}
+    actions:
+      - {device: IV Drip, capability: Set Rate, args: {ml_per_hour: 45}}
+    expected_type: redundancy
+
+  # Same device, overlapping window, but a compatible utility action.
+  - name: Alarm Reset Routine
+    text: "Reset the IV alarm periodically, all day."
+    window: {from_time: "00:00", to_time: "23:59"}
+    actions:
+      - {device: IV Drip, capability: Reset Alarm, args: {}}
+    expected_type: none
+
+  # Different device -> pre-filter drops.
+  - name: Room Light Dim for Sleep
+    text: "Dim room lights to 10% from 21:00 to 06:00."
+    window: {from_time: "21:00", to_time: "06:00"}
+    actions:
+      - {device: Room Lights, capability: Dim, args: {percentage: 10}}
+    expected_type: none
+
+  # Different device AND genuinely non-overlapping window against a
+  # midnight-wrapping window (08:00-20:00 vs 21:00->06:00 wrapped) -- checks
+  # the wrap-around math doesn't spuriously report overlap.
+  - name: Daytime Vitals Check
+    text: "Measure vitals every hour, 08:00-20:00."
+    window: {from_time: "08:00", to_time: "20:00"}
+    actions:
+      - {device: Vital Monitor, capability: Measure HR, args: {}}
+    expected_type: none

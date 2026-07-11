@@ -1,0 +1,136 @@
+# Smart Home device catalog — transcribed from comprehensive_scenarios.md section 1.
+# Shape matches application.py::_serialize_devices() exactly (the list passed to
+# llm.parse_policy_with_llm as `devices_data`), so scenarios scored against this
+# catalog see what the real pipeline would see.
+devices:
+  - name: Bedroom Curtains
+    type: Curtain
+    capabilities:
+      - name: Open
+        url: http://home/bed/curtains/open
+        method: POST
+        input_schema: {}
+      - name: Close
+        url: http://home/bed/curtains/close
+        method: POST
+        input_schema: {}
+      - name: Set Position
+        url: http://home/bed/curtains/set
+        method: POST
+        input_schema: {percentage: integer}
+
+  - name: Coffee Machine
+    type: Appliance
+    capabilities:
+      - name: Brew
+        url: http://home/kitchen/coffee/brew
+        method: POST
+        input_schema: {type: string, cups: integer}
+      - name: Turn On
+        url: http://home/kitchen/coffee/on
+        method: POST
+        input_schema: {}
+      - name: Turn Off
+        url: http://home/kitchen/coffee/off
+        method: POST
+        input_schema: {}
+
+  - name: Thermostat
+    type: Climate
+    capabilities:
+      - name: Set Temp
+        url: http://home/hvac/set
+        method: POST
+        input_schema: {temp: float}
+      - name: Set Mode
+        url: http://home/hvac/mode
+        method: POST
+        input_schema: {mode: "string (cool/heat/fan)"}
+      - name: Fan Control
+        url: http://home/hvac/fan
+        method: POST
+        input_schema: {state: "string (on/auto)"}
+
+  - name: Smart Speaker
+    type: Speaker
+    capabilities:
+      - name: Play Music
+        url: http://home/living/speaker/play
+        method: POST
+        input_schema: {playlist: string}
+      - name: Set Volume
+        url: http://home/living/speaker/volume
+        method: POST
+        input_schema: {level: integer}
+      - name: Stop
+        url: http://home/living/speaker/stop
+        method: POST
+        input_schema: {}
+
+  - name: Living Room Light
+    type: Light
+    capabilities:
+      - name: Turn On
+        url: http://home/living/light/on
+        method: POST
+        input_schema: {}
+      - name: Turn Off
+        url: http://home/living/light/off
+        method: POST
+        input_schema: {}
+      - name: Dim
+        url: http://home/living/light/dim
+        method: POST
+        input_schema: {percentage: integer}
+      - name: Set Color
+        url: http://home/living/light/color
+        method: POST
+        input_schema: {hex: string}
+
+  - name: Front Door Lock
+    type: Lock
+    capabilities:
+      - name: Lock
+        url: http://home/front/lock
+        method: POST
+        input_schema: {}
+      - name: Unlock
+        url: http://home/front/unlock
+        method: POST
+        input_schema: {code: string}
+      - name: Status
+        url: http://home/front/status
+        method: GET
+        input_schema: {}
+
+  - name: Garage Door
+    type: Door
+    capabilities:
+      - name: Open
+        url: http://home/garage/open
+        method: POST
+        input_schema: {}
+      - name: Close
+        url: http://home/garage/close
+        method: POST
+        input_schema: {}
+
+  - name: Security Camera
+    type: Camera
+    capabilities:
+      - name: Record
+        url: http://home/cam/record
+        method: POST
+        input_schema: {duration: integer}
+      - name: Pan
+        url: http://home/cam/pan
+        method: POST
+        input_schema: {angle: integer}
+      - name: Snapshot
+        url: http://home/cam/snap
+        method: POST
+        input_schema: {}
+      - name: Analyze Scene
+        url: http://home/cam/snap
+        method: VLM
+        input_schema: {prompt: string, target_labels: [string], source_method: POST}

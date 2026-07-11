@@ -1,0 +1,46 @@
+# Source: comprehensive_scenarios.md, Smart Agriculture task 2 "Storm Protection".
+# The heater has a same-device Turn On -> Set Temp chain (like Smart Speaker's
+# Play -> Volume pattern), nested inside an otherwise-parallel fan-out — tests
+# alignment when only one of several root-level branches has internal
+# sequencing.
+id: farm_storm_protection
+nl: "Close greenhouse roof, turn off grow lights, recall drone to home, and turn on heater to 20 degrees."
+tags: [multi_node, parallel]
+catalog: farm
+expected_dag:
+  nodes:
+    - id: n1
+      device: Greenhouse Roof
+      capability: Close
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: skip_dependents
+    - id: n2
+      device: Grow Lights
+      capability: Turn Off
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: ignore
+    - id: n3
+      device: Drone
+      capability: Return
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: skip_dependents
+    - id: n4
+      device: Heater
+      capability: Turn On
+      args: {}
+      dependencies: []
+      condition: null
+      on_failure: ignore
+    - id: n5
+      device: Heater
+      capability: Set Temp
+      args: {temp: 20}
+      dependencies: [n4]
+      condition: {type: on_success}
+      on_failure: ignore
