@@ -49,10 +49,11 @@ backend/   FastAPI app, SQLAlchemy models, LLM/VLM integration, execution engine
 | `models.py` | SQLAlchemy models: Device, Capability, Policy, Task, ExecutionRun/Step, SensorReading |
 | `database.py` | Engine/session setup (PostgreSQL) |
 | `schemas.py` | Pydantic request/response schemas |
-| `llm.py` | Groq LLM - policy parsing, task breakdown, device mapping, conflict judging |
+| `llm.py` | Policy parsing, task breakdown, device mapping (via `llm_provider`) |
+| `llm_provider.py` | Selects the chat-completion backend (Groq or OpenAI) from `.env` |
 | `dag_utils.py` | DAG validation, topological levels, flat-to-DAG migration |
 | `executor.py` | Executes a policy's DAG (parallel/sequential/conditional), persists runs |
-| `conflicts.py` | Conflict pre-filter + LLM judge |
+| `conflicts.py` | Conflict pre-filter + LLM judge (via `llm_provider`) |
 | `vision.py` | VLM image/video analysis (Gemini / Groq) |
 | `mock_devices.py` | Standalone mock IoT device server for local testing |
 
@@ -65,7 +66,8 @@ Components include `DAGView`, `ConflictCard`, `VlmTestPanel`, `VoiceButton`, and
 ## Tech stack
 
 - **Backend:** Python, FastAPI, SQLAlchemy, PostgreSQL (`psycopg`), Uvicorn, httpx
-- **AI:** Groq (LLM + Whisper), Google Gemini / Groq vision models
+- **AI:** Groq or OpenAI (chat-completion LLM, selectable via `.env`), Groq Whisper, Google Gemini
+  / Groq vision models
 - **Frontend:** Next.js 16, React 19, TypeScript, Tailwind CSS 4, React Flow, axios
 
 ## Getting started
@@ -74,7 +76,8 @@ Components include `DAGView`, `ConflictCard`, `VlmTestPanel`, `VoiceButton`, and
 
 - Python 3.11+ and a running PostgreSQL instance
 - Node.js 18+
-- A Groq API key (and a Gemini API key if you use the Gemini VLM provider)
+- A Groq API key or an OpenAI API key (whichever `LLM_PROVIDER` you choose), and a Gemini API
+  key if you use the Gemini VLM provider
 
 ### 1. Backend
 
@@ -88,7 +91,13 @@ pip install -r requirements.txt
 Create `backend/.env`:
 
 ```env
+# LLM provider for policy parsing, task breakdown, device mapping, and
+# conflict judging. Defaults to groq if unset.
+LLM_PROVIDER=groq              # or openai
 GROQ_API_KEY=your_groq_key
+# OPENAI_API_KEY=your_openai_key   # required if LLM_PROVIDER=openai
+# LLM_MODEL=llama-3.3-70b-versatile  # override the provider's default model
+
 # Either a full URL...
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
 # ...or individual parts (used if DATABASE_URL is unset):
@@ -103,6 +112,11 @@ GEMINI_API_KEY=your_gemini_key
 VLM_PROVIDER=gemini            # or groq
 # VLM_MODEL=gemini-3.5-flash
 ```
+
+`LLM_PROVIDER` picks the SDK (`groq` or `openai`); each provider reads its own API key and falls
+back to a sensible default model (`llama-3.3-70b-versatile` for Groq, `gpt-4o-mini` for OpenAI)
+unless `LLM_MODEL` is set. This is independent of `VLM_PROVIDER`, which only controls camera/video
+scene analysis.
 
 Run it (tables are created automatically on startup):
 
@@ -149,4 +163,49 @@ uvicorn mock_devices:app --port 8001
 | `POST` | `/api/transcribe` | Voice to text (Whisper) |
 | `POST` | `/api/vlm/test` | One-off image/video VLM analysis |
 | `POST` | `/api/cron/tick` | Manually trigger a scheduler tick |
+
+## Evaluation harness (`eval/`)
+
+A standalone, deterministic (no-LLM-judge) scoring harness that produces hard accuracy numbers
+for the NL→DAG compiler and the two-stage conflict detector. Fully isolated from `backend/` —
+it imports the real `schemas.ExecutionDAG`/`dag_utils` contracts rather than duplicating them, but
+nothing in `backend/` imports from it.
+
+- **`eval/catalogs/`** — 5 device catalogs (home, factory, hospital, farm, retail), in the same
+  shape the app feeds the LLM.
+- **`eval/scenarios/dag/`** — 10 labelled NL→DAG scenarios (expected nodes, edges, conditions,
+  failure modes), tagged `single_node` / `multi_node` / `conditional` / `parallel` / `scheduled`.
+- **`eval/scenarios/conflicts/`** — 5 labelled conflict scenarios (~24 candidate pairs) covering
+  contradiction / redundancy / overlap / none.
+- **`eval/scoring/`** — the scorers themselves: node/edge alignment by canonical
+  `(device, capability)` identity (with arg-similarity and topological-position disambiguation),
+  precision/recall/F1, condition and failure-mode accuracy, strict exact-structural-match rate,
+  per-class conflict P/R/F1, and pre-filter recall measured in isolation.
+- **`eval/run.py`** — the CLI runner: aggregates metrics overall and per tag, measures structural
+  stability across repeated generations, and writes a JSON report.
+- **`eval/tests/`** — a 65-case pytest suite for the scorers, fully offline (no network calls).
+
+```bash
+cd backend
+pip install -r ../eval/requirements-dev.txt   # adds pytest
+
+# Run the scorer's own test suite (no API key / network needed)
+python -m pytest ../eval/tests -v
+```
+
+`eval.run` is a package entry point and must be invoked with the repo root as the working
+directory (not `backend/`):
+
+```bash
+cd ..    # repo root
+
+# Run the full harness against the real LLM_PROVIDER configured in backend/.env
+python -m eval.run --repeats 5
+
+# Or an offline wiring smoke test (no network calls at all)
+python -m eval.run --mock
+```
+
+`eval/run.py` reads whichever `LLM_PROVIDER` is configured in `backend/.env`, so switching between
+Groq and OpenAI also changes which model the harness evaluates.
 
