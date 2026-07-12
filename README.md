@@ -11,7 +11,15 @@ sensor events.
 - **Natural-language to execution DAG.** A policy like *"At 11 PM lock the front door, then once
   it's locked arm the camera to record for 60s, and turn off all lights"* is parsed by an LLM
   into a graph of nodes with dependencies, conditions (`on_success`, value comparisons), and
-  per-node failure handling (`ignore` / `halt_branch` / `skip_dependents`).
+  per-node failure handling (`ignore` / `halt_branch` / `skip_dependents`). Every candidate DAG is
+  schema-validated and grounded against the live device catalog (rejecting nodes that reference
+  devices/capabilities that don't exist), with a bounded retry loop that feeds the specific error
+  back to the model before falling back to an empty DAG.
+- **Sensitive-action confirmation.** Capabilities can be flagged `sensitive` (destructive or
+  security-relevant, e.g. unlock, disarm, e-stop-adjacent actions) in the device catalog. A policy
+  whose DAG touches one requires a one-time explicit confirmation before it can execute — enforced
+  at the single execution choke point, so scheduler ticks, SSE triggers, and manual runs are all
+  covered.
 - **Intelligent device selection.** The LLM is given the live device catalog (each device's
   capabilities, HTTP method, and input schema) and maps the request onto the actual capabilities
   available.
@@ -49,10 +57,10 @@ backend/   FastAPI app, SQLAlchemy models, LLM/VLM integration, execution engine
 | `models.py` | SQLAlchemy models: Device, Capability, Policy, Task, ExecutionRun/Step, SensorReading |
 | `database.py` | Engine/session setup (PostgreSQL) |
 | `schemas.py` | Pydantic request/response schemas |
-| `llm.py` | Policy parsing, task breakdown, device mapping (via `llm_provider`) |
+| `llm.py` | Policy parsing (schema-validated, grounded, bounded-retry), task breakdown, device mapping (via `llm_provider`) |
 | `llm_provider.py` | Selects the chat-completion backend (Groq or OpenAI) from `.env` |
 | `dag_utils.py` | DAG validation, topological levels, flat-to-DAG migration |
-| `executor.py` | Executes a policy's DAG (parallel/sequential/conditional), persists runs |
+| `executor.py` | Executes a policy's DAG (parallel/sequential/conditional), gates sensitive policies behind confirmation, persists runs with a device-state summary |
 | `conflicts.py` | Conflict pre-filter + LLM judge (via `llm_provider`) |
 | `vision.py` | VLM image/video analysis (Gemini / Groq) |
 | `mock_devices.py` | Standalone mock IoT device server for local testing |
@@ -158,6 +166,7 @@ uvicorn mock_devices:app --port 8001
 | `POST` | `/api/policies/` | Create policy from natural language |
 | `POST` | `/api/policies/{id}/execute` | Run a policy's DAG |
 | `POST` | `/api/policies/{id}/execute/stream` | Run with live SSE step events |
+| `POST` | `/api/policies/{id}/confirm` | One-time arm for a policy that touches a sensitive capability |
 | `POST` | `/api/tasks/` | Break a task into multiple policies |
 | `GET` | `/api/executions/`, `/api/executions/{id}` | Execution history & detail |
 | `POST` | `/api/transcribe` | Voice to text (Whisper) |
